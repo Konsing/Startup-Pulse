@@ -13,7 +13,7 @@ logs:
 	docker compose logs -f
 
 init-bq:
-	docker compose exec airflow-webserver python -m src.utils.init_bq
+	docker compose exec airflow-webserver python /opt/airflow/scripts/init_bigquery.py
 
 build:
 	docker compose build

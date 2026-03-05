@@ -1,10 +1,8 @@
 """Reddit Trends ETL pipeline DAG.
 
-Implements Phase 2 (extract) and Phase 3 (transform) of the pipeline.
-Load tasks will be added in a later phase.
+Implements the full ETL pipeline: extract Reddit posts, transform with
+NLP (clean, keywords, metrics), and load into BigQuery.
 """
-
-from datetime import datetime
 
 import pendulum
 from airflow.models.dag import DAG
@@ -79,6 +77,22 @@ def transform_aggregate_metrics(**context):
     return result
 
 
+def load_to_bigquery(**context):
+    """Load all transformed data into BigQuery."""
+    from src.load.bigquery_loader import BigQueryLoader
+
+    execution_date = context["ds"]
+    cleaned_path = f"/opt/airflow/data/cleaned/{execution_date}/posts.json"
+    keywords_path = f"/opt/airflow/data/keywords/{execution_date}/keywords.json"
+    metrics_path = f"/opt/airflow/data/metrics/{execution_date}/metrics.json"
+
+    loader = BigQueryLoader()
+    result = loader.load_all(cleaned_path, keywords_path, metrics_path)
+
+    context["ti"].xcom_push(key="load_metadata", value=result)
+    return result
+
+
 with DAG(
     dag_id="reddit_trends_pipeline",
     default_args=default_args,
@@ -110,4 +124,11 @@ with DAG(
         python_callable=transform_aggregate_metrics,
     )
 
-    extract_task >> transform_clean_task >> transform_keywords_task >> transform_metrics_task
+    load_task = PythonOperator(
+        task_id="load_to_bigquery",
+        python_callable=load_to_bigquery,
+    )
+
+    # Keywords and metrics both read cleaned posts — run them in parallel
+    extract_task >> transform_clean_task >> [transform_keywords_task, transform_metrics_task]
+    [transform_keywords_task, transform_metrics_task] >> load_task
