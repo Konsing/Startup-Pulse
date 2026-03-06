@@ -432,6 +432,27 @@ sudo usermod -aG docker $USER
 # Log out and back in for changes to take effect
 ```
 
+### Airflow Permission Error on `/opt/airflow/logs`
+
+If you see `PermissionError: [Errno 13] Permission denied: '/opt/airflow/logs/scheduler'`, the Airflow container (UID 50000) can't write to the bind-mounted `airflow/logs/` directory on the host.
+
+Fix:
+```bash
+# Stop containers
+make down
+
+# Make the directories world-writable (uses a temporary Alpine container as root)
+docker run --rm \
+  -v ./airflow/logs:/fix/logs \
+  -v ./airflow/data:/fix/data \
+  alpine chmod -R 777 /fix/logs /fix/data
+
+# Restart
+make up
+```
+
+This is needed because the host directories are owned by your user (UID 1000), but the Airflow container runs as UID 50000.
+
 ### Airflow Webserver Not Starting
 
 Check logs:
