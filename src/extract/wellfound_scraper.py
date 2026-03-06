@@ -43,6 +43,20 @@ class WellfoundScraper:
             page.goto(WELLFOUND_JOBS_URL)
             page.wait_for_load_state("networkidle")
 
+            # Detect CAPTCHA / bot-protection pages
+            if self._is_blocked(page):
+                logger.warning(
+                    "Wellfound returned a CAPTCHA/bot-detection page. "
+                    "Headless scraping is blocked by DataDome. Skipping."
+                )
+                browser.close()
+                Path(output_dir).mkdir(parents=True, exist_ok=True)
+                output_path = os.path.join(output_dir, "jobs.json")
+                with open(output_path, "w", encoding="utf-8") as fh:
+                    json.dump([], fh)
+                logger.info("Wrote 0 Wellfound jobs to %s (blocked)", output_path)
+                return {"total_jobs": 0, "blocked": True}
+
             for page_num in range(SCRAPE_MAX_PAGES):
                 logger.info("Wellfound scrape: page %d", page_num + 1)
                 cards = self._extract_cards(page)
@@ -65,6 +79,18 @@ class WellfoundScraper:
 
         logger.info("Wrote %d Wellfound jobs to %s", len(jobs), output_path)
         return {"total_jobs": len(jobs)}
+
+    @staticmethod
+    def _is_blocked(page) -> bool:
+        """Return True if the page is a CAPTCHA or bot-detection challenge."""
+        html = page.content().lower()
+        return any(marker in html for marker in [
+            "captcha-delivery.com",
+            "datadome",
+            "challenge-platform",
+            "cf-chl-bypass",
+            "just a moment",
+        ])
 
     def _extract_cards(self, page) -> list[dict]:
         """Extract job card data from the current page DOM."""

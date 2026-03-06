@@ -70,31 +70,76 @@ class YCScraper:
     # -- Private helpers ------------------------------------------------------
 
     def _extract_cards(self, page) -> list[dict]:
-        """Extract job card data from the current page DOM."""
+        """Extract job card data from the current page DOM.
+
+        Each job on workatastartup.com is represented by a ``.job-name``
+        div containing an ``<a>`` with the title and URL.  Company info
+        lives in the ancestor card (the ``.bg-beige-lighter`` div) under
+        ``.company-details .font-bold``.  Job metadata (type, location,
+        category) lives in the sibling ``.job-details`` paragraph.
+        """
         cards = []
-        job_elements = page.query_selector_all("[class*='job'], [class*='listing'], [data-job]")
+        job_name_elements = page.query_selector_all(".job-name")
 
-        for el in job_elements:
+        for el in job_name_elements:
             try:
-                title_el = el.query_selector("h2, h3, [class*='title']")
-                company_el = el.query_selector("[class*='company'], [class*='org']")
-                location_el = el.query_selector("[class*='location']")
-                salary_el = el.query_selector("[class*='salary'], [class*='compensation']")
-                link_el = el.query_selector("a[href*='/jobs/']")
-                batch_el = el.query_selector("[class*='batch']")
+                info = el.evaluate("""el => {
+                    // Title + URL from the <a> inside .job-name
+                    const a = el.querySelector('a');
+                    const title = a ? a.innerText.trim() : '';
+                    const url = a ? a.getAttribute('href') : '';
 
-                card = {
-                    "title": title_el.inner_text().strip() if title_el else "",
-                    "company": company_el.inner_text().strip() if company_el else "",
-                    "location": location_el.inner_text().strip() if location_el else "",
-                    "salary": salary_el.inner_text().strip() if salary_el else "",
-                    "description": el.inner_text().strip(),
-                    "url": link_el.get_attribute("href") if link_el else "",
-                    "batch": batch_el.inner_text().strip() if batch_el else "",
-                }
+                    // Walk up to the card container (.bg-beige-lighter)
+                    let card = el;
+                    for (let i = 0; i < 10; i++) {
+                        card = card.parentElement;
+                        if (!card) break;
+                        if (card.className && card.className.includes('bg-beige-lighter')) break;
+                    }
 
-                if card["title"] and card["company"]:
-                    cards.append(card)
+                    // Company name from .company-details .font-bold
+                    let company = '';
+                    if (card) {
+                        const bold = card.querySelector('.company-details .font-bold');
+                        if (bold) company = bold.innerText.trim();
+                    }
+
+                    // Job details from sibling .job-details spans
+                    const parent = el.parentElement;
+                    const details = parent ? parent.querySelector('.job-details') : null;
+                    const spans = details
+                        ? Array.from(details.querySelectorAll('span')).map(s => s.innerText.trim())
+                        : [];
+
+                    // Full card text for description
+                    const description = card ? card.innerText.trim() : '';
+
+                    return {title, url, company, spans, description};
+                }""")
+
+                if not info.get("title") or not info.get("company"):
+                    continue
+
+                # Parse location from spans (usually index 1)
+                spans = info.get("spans", [])
+                location = spans[1] if len(spans) > 1 else ""
+
+                # Extract YC batch from company name, e.g. "Mason (W16)"
+                batch_match = re.search(r"\(([WSF]\d{2})\)", info.get("company", ""))
+                batch = batch_match.group(1) if batch_match else ""
+
+                # Clean company name: remove batch and \xa0
+                company = re.sub(r"\s*\([WSF]\d{2}\)\s*", "", info["company"]).replace("\xa0", " ").strip()
+
+                cards.append({
+                    "title": info["title"],
+                    "company": company,
+                    "location": location,
+                    "salary": "",  # YC listings don't show salary inline
+                    "description": info.get("description", ""),
+                    "url": info.get("url", ""),
+                    "batch": batch,
+                })
             except Exception as exc:
                 logger.debug("Failed to parse YC card: %s", exc)
                 continue
