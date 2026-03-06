@@ -1,79 +1,86 @@
-"""Metrics aggregation per subreddit/category group.
+# src/transform/metrics_aggregator.py
+"""Market metrics aggregation per source and role category.
 
-Groups cleaned posts by (subreddit, category) and computes summary
-statistics including scores, comments, upvote ratios, and posting rates.
+Groups cleaned jobs by source, computes summary statistics
+including salary ranges, remote percentages, and job counts.
 """
 
 import json
 import logging
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pandas as pd
+import numpy as np
+
+from src.utils.config import ROLE_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
 
 class MetricsAggregator:
-    """Aggregate engagement metrics per subreddit/category."""
+    """Aggregate job market metrics by source and role category."""
 
-    def aggregate(self, input_path: str, output_path: str) -> dict:
-        """Read cleaned posts, compute aggregated metrics, and write results.
+    def aggregate(self, jobs: list[dict]) -> list[dict]:
+        """Compute market metrics from cleaned job dicts.
 
         Args:
-            input_path: Path to the cleaned ``posts.json`` file.
-            output_path: Path where ``metrics.json`` will be written.
+            jobs: List of normalized job dicts.
 
         Returns:
-            Metadata dict with ``subreddits_aggregated``.
+            List of metric dicts grouped by source.
         """
-        logger.info("Reading cleaned posts from %s", input_path)
-        with open(input_path, "r", encoding="utf-8") as fh:
-            posts = json.load(fh)
+        if not jobs:
+            return []
 
-        df = pd.DataFrame(posts)
-        all_metrics: list[dict] = []
+        # Group by source
+        by_source: dict[str, list[dict]] = defaultdict(list)
+        for job in jobs:
+            by_source[job.get("source", "unknown")].append(job)
 
-        for (subreddit, category), group_df in df.groupby(["subreddit", "category"]):
-            # Parse created_utc timestamps for posting-rate calculation
-            timestamps = pd.to_datetime(group_df["created_utc"], utc=True)
-            time_spread_hours = 0.0
-            if len(timestamps) > 1:
-                time_spread = (timestamps.max() - timestamps.min()).total_seconds() / 3600
-                time_spread_hours = time_spread if time_spread > 0 else 0.0
+        results = []
+        now = datetime.now(timezone.utc).isoformat()
 
-            posting_rate = (
-                len(group_df) / time_spread_hours
-                if time_spread_hours > 0
-                else 0.0
+        for source, group in by_source.items():
+            # Salary stats (only from jobs with salary data)
+            salaries = [
+                (j["salary_min"] + j["salary_max"]) / 2
+                for j in group
+                if j.get("salary_min") and j.get("salary_max")
+            ]
+
+            # Remote percentage
+            remote_count = sum(1 for j in group if j.get("remote"))
+            remote_pct = (remote_count / len(group) * 100) if group else 0.0
+
+            # Top role category
+            role_counts = self._classify_roles(group)
+            top_skills_str = ", ".join(
+                k for k, _ in sorted(role_counts.items(), key=lambda x: -x[1])[:5]
             )
 
-            metrics = {
-                "subreddit": subreddit,
-                "category": category,
-                "total_posts_collected": int(len(group_df)),
-                "avg_score": float(group_df["score"].mean()),
-                "median_score": float(group_df["score"].median()),
-                "max_score": int(group_df["score"].max()),
-                "avg_comments": float(group_df["num_comments"].mean()),
-                "total_comments": int(group_df["num_comments"].sum()),
-                "avg_upvote_ratio": float(group_df["upvote_ratio"].mean()),
-                "posting_rate_per_hour": float(posting_rate),
-                "collected_at": datetime.now(timezone.utc).isoformat(),
-            }
-            all_metrics.append(metrics)
+            results.append({
+                "source": source,
+                "role_category": "all",
+                "total_jobs": len(group),
+                "avg_salary": float(np.mean(salaries)) if salaries else None,
+                "median_salary": float(np.median(salaries)) if salaries else None,
+                "remote_pct": round(remote_pct, 1),
+                "top_skills": top_skills_str or None,
+                "collected_at": now,
+            })
 
-        # Write results
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as fh:
-            json.dump(all_metrics, fh, ensure_ascii=False, indent=2)
+        logger.info("Aggregated metrics for %d sources", len(results))
+        return results
 
-        metadata = {
-            "subreddits_aggregated": len(all_metrics),
-        }
-        logger.info(
-            "Aggregated metrics for %d subreddits -> %s",
-            metadata["subreddits_aggregated"],
-            output_path,
-        )
-        return metadata
+    @staticmethod
+    def _classify_roles(jobs: list[dict]) -> dict[str, int]:
+        """Count jobs per role category using keyword matching on titles."""
+        counts: dict[str, int] = defaultdict(int)
+        for job in jobs:
+            title = (job.get("title", "") + " " + job.get("cleaned_description", "")).lower()
+            for category, keywords in ROLE_CATEGORIES.items():
+                if any(kw in title for kw in keywords):
+                    counts[category] += 1
+                    break
+        return dict(counts)
