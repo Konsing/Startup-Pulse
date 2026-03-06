@@ -300,14 +300,15 @@ Open http://localhost:8080 and log in with `admin` / `admin`.
 
 The `startup_pulse_pipeline` DAG:
 - **Schedule**: `0 8 * * *` — runs daily at 08:00 UTC
-- **Tasks**: 7 tasks in this order:
-  1. `scrape_yc` — Scrape YC Work at a Startup across 10 role categories (parallel)
-  2. `scrape_greenhouse` — Fetch jobs from 22 company boards via Greenhouse API (parallel)
-  3. `scrape_hn` — Scrape HN "Who is Hiring?" thread (parallel)
-  4. `clean_and_normalize` — Merge all sources, clean text with NLTK
-  5. `extract_skills` — TF-IDF + taxonomy skill extraction (parallel with metrics)
-  6. `aggregate_metrics` — Market statistics (parallel with skills)
-  7. `load_to_bigquery` — Deduplicate and load all data to BigQuery
+- **Tasks**: 8 tasks in this order:
+  1. `scrape_yc` — Scrape YC Work at a Startup for software roles (parallel)
+  2. `scrape_greenhouse` — Fetch software jobs from 22 company boards via Greenhouse API (parallel)
+  3. `scrape_ashby` — Fetch software jobs from 18 company boards via Ashby API (parallel)
+  4. `scrape_hn` — Scrape HN "Who is Hiring?" thread (parallel)
+  5. `clean_and_normalize` — Merge all sources, clean text with NLTK
+  6. `extract_skills` — TF-IDF + taxonomy skill extraction (parallel with metrics)
+  7. `aggregate_metrics` — Market statistics (parallel with skills)
+  8. `load_to_bigquery` — Deduplicate and load all data to BigQuery
 
 ### Step 6.3: Unpause the DAG (for Automatic Runs)
 
@@ -348,7 +349,7 @@ docker compose exec airflow-webserver airflow dags trigger startup_pulse_pipelin
 ### Step 7.3: Expected Timeline
 
 A typical pipeline run takes 3-8 minutes:
-- `scrape_yc` / `scrape_greenhouse` / `scrape_hn`: 1-3 minutes (runs in parallel; YC uses Playwright, Greenhouse and HN use APIs)
+- `scrape_yc` / `scrape_greenhouse` / `scrape_ashby` / `scrape_hn`: 1-3 minutes (runs in parallel; YC uses Playwright, Greenhouse/Ashby/HN use APIs)
 - `clean_and_normalize`: 5-15 seconds
 - `extract_skills`: 5-10 seconds
 - `aggregate_metrics`: 2-5 seconds
@@ -411,7 +412,7 @@ The dashboard runs at http://localhost:8501 and reads directly from BigQuery.
 - **Full Metrics Table**: All market metrics
 
 #### Job Explorer
-- **Source Filter**: Filter by data source (YC, Greenhouse, HN)
+- **Source Filter**: Filter by data source (YC, Greenhouse, Ashby, HN)
 - **Remote Filter**: Filter by remote/on-site
 - **Search**: Free-text search by company or job title
 - **Jobs Table**: Sortable table with company, title, salary range, location, remote status
@@ -542,9 +543,18 @@ If you modify Python files in `src/` or `streamlit_app/`:
    ```
 2. No rebuild or restart needed — the change is picked up on the next DAG run (files are volume-mounted)
 
+### Adding an Ashby Board
+
+To scrape a new company from Ashby:
+
+1. Find the company's board token — it's the slug in their careers URL (e.g., `jobs.ashbyhq.com/linear` → token is `linear`)
+2. Verify it works: `curl -s "https://api.ashbyhq.com/posting-api/job-board/TOKEN" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('jobs',[])))"`
+3. Add the token to `ASHBY_BOARD_TOKENS` in `src/utils/config.py`
+4. No rebuild needed — the change is picked up on the next DAG run
+
 ### Adding a New Data Source
 
-Adding a fourth scraper requires:
+Adding a fifth scraper requires:
 1. Create a new scraper class in `src/extract/` following the pattern of `hn_scraper.py`
 2. Add a new extract task in `airflow/dags/startup_pulse_dag.py`
 3. Wire it into the DAG dependencies

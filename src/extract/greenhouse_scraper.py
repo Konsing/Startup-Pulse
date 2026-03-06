@@ -16,7 +16,7 @@ from pathlib import Path
 
 import requests
 
-from src.utils.config import GREENHOUSE_API_BASE, GREENHOUSE_BOARD_TOKENS, SCRAPE_DELAY_SECONDS
+from src.utils.config import GREENHOUSE_API_BASE, GREENHOUSE_BOARD_TOKENS, SCRAPE_DELAY_SECONDS, is_software_role
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,8 @@ class GreenhouseScraper:
 
         data = resp.json()
         raw_jobs = data.get("jobs", [])
-        return [self._normalize(raw, token) for raw in raw_jobs]
+        normalized = [self._normalize(raw, token) for raw in raw_jobs]
+        return [j for j in normalized if is_software_role(j["title"])]
 
     def _normalize(self, raw: dict, board_token: str) -> dict:
         """Normalize a Greenhouse API job into the shared schema."""
