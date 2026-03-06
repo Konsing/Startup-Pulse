@@ -1,12 +1,12 @@
-"""Reddit Trends Dashboard — Streamlit application.
+"""Startup Pulse Dashboard — Streamlit application.
 
-Visualizes keyword trends, subreddit engagement metrics, and recent
-posts from the BigQuery data warehouse.
+Visualizes skill trends, market metrics, and recent job postings
+from the BigQuery data warehouse.
 """
 
 import streamlit as st
 
-st.set_page_config(page_title="Reddit Trends", layout="wide")
+st.set_page_config(page_title="Startup Pulse", layout="wide")
 
 from utils.bq_client import get_dataset, query_df
 
@@ -17,36 +17,34 @@ DATASET = get_dataset()
 
 
 @st.cache_data(ttl=300)
-def load_keyword_trends():
+def load_skill_trends():
     return query_df(f"""
-        SELECT keyword, subreddit, category, frequency, tfidf_score,
-               avg_score, avg_comments, collected_at
-        FROM `{DATASET}.keyword_trends`
+        SELECT skill, category, frequency, tfidf_score,
+               avg_salary, num_jobs, collected_at
+        FROM `{DATASET}.skill_trends`
         WHERE collected_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
-        ORDER BY tfidf_score DESC
+        ORDER BY frequency DESC
     """)
 
 
 @st.cache_data(ttl=300)
-def load_subreddit_metrics():
+def load_market_metrics():
     return query_df(f"""
-        SELECT subreddit, category, total_posts_collected,
-               avg_score, median_score, max_score,
-               avg_comments, total_comments, avg_upvote_ratio,
-               posting_rate_per_hour, collected_at
-        FROM `{DATASET}.subreddit_metrics`
+        SELECT source, role_category, total_jobs,
+               avg_salary, median_salary, remote_pct,
+               top_skills, collected_at
+        FROM `{DATASET}.market_metrics`
         WHERE collected_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
         ORDER BY collected_at DESC
     """)
 
 
 @st.cache_data(ttl=300)
-def load_recent_posts(limit=200):
+def load_recent_jobs(limit=200):
     return query_df(f"""
-        SELECT post_id, subreddit, category, title, score,
-               num_comments, upvote_ratio, created_utc, collected_at,
-               listing_type
-        FROM `{DATASET}.raw_posts`
+        SELECT job_id, source, company, title, salary_min, salary_max,
+               location, remote, company_stage, yc_batch, url, collected_at
+        FROM `{DATASET}.raw_jobs`
         ORDER BY collected_at DESC
         LIMIT {limit}
     """)
@@ -54,21 +52,21 @@ def load_recent_posts(limit=200):
 
 # ── Sidebar ───────────────────────────────────────────────────────────
 
-st.sidebar.title("Reddit Trends")
+st.sidebar.title("Startup Pulse")
 page = st.sidebar.radio(
     "Navigate",
-    ["Overview", "Keyword Trends", "Subreddit Metrics", "Recent Posts"],
+    ["Overview", "Skill Trends", "Market Metrics", "Job Explorer"],
 )
 
 # ── Overview page ─────────────────────────────────────────────────────
 
 if page == "Overview":
-    st.title("Reddit Trends Overview")
+    st.title("Startup Pulse Overview")
 
     try:
-        metrics_df = load_subreddit_metrics()
-        keywords_df = load_keyword_trends()
-        posts_df = load_recent_posts(limit=50)
+        metrics_df = load_market_metrics()
+        skills_df = load_skill_trends()
+        jobs_df = load_recent_jobs(limit=50)
     except Exception as e:
         st.error(f"Could not load data from BigQuery: {e}")
         st.info("Make sure the ETL pipeline has run at least once.")
@@ -79,101 +77,114 @@ if page == "Overview":
         st.stop()
 
     # KPI cards
-    latest = metrics_df.sort_values("collected_at", ascending=False).drop_duplicates("subreddit")
+    latest = metrics_df.sort_values("collected_at", ascending=False).drop_duplicates("source")
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Subreddits Tracked", len(latest))
-    col2.metric("Total Posts", int(latest["total_posts_collected"].sum()))
-    col3.metric("Avg Score", f"{latest['avg_score'].mean():.0f}")
-    col4.metric("Unique Keywords", len(keywords_df["keyword"].unique()) if not keywords_df.empty else 0)
+    col1.metric("Total Jobs", int(latest["total_jobs"].sum()))
+    col2.metric("Sources", len(latest))
+    col3.metric("Unique Skills", len(skills_df["skill"].unique()) if not skills_df.empty else 0)
+    col4.metric("Avg Remote %", f"{latest['remote_pct'].mean():.0f}%")
 
     st.divider()
 
-    # Two-column layout: top keywords + top subreddits
+    # Two-column layout: top skills + top sources
     left, right = st.columns(2)
 
     with left:
-        st.subheader("Top Keywords (by TF-IDF)")
-        if not keywords_df.empty:
-            top_kw = keywords_df.nlargest(15, "tfidf_score")[
-                ["keyword", "subreddit", "tfidf_score", "frequency"]
+        st.subheader("Top Skills (by Frequency)")
+        if not skills_df.empty:
+            top_skills = skills_df.nlargest(15, "frequency")[
+                ["skill", "category", "frequency", "avg_salary"]
             ]
-            st.dataframe(top_kw, use_container_width=True, hide_index=True)
+            st.dataframe(top_skills, use_container_width=True, hide_index=True)
         else:
-            st.info("No keyword data yet.")
+            st.info("No skill data yet.")
 
     with right:
-        st.subheader("Top Subreddits (by Avg Score)")
+        st.subheader("Sources Overview")
         if not latest.empty:
-            top_subs = latest.nlargest(10, "avg_score")[
-                ["subreddit", "category", "avg_score", "total_posts_collected"]
-            ]
-            st.dataframe(top_subs, use_container_width=True, hide_index=True)
+            st.dataframe(
+                latest[["source", "total_jobs", "avg_salary", "remote_pct"]],
+                use_container_width=True,
+                hide_index=True,
+            )
 
-# ── Keyword Trends page ──────────────────────────────────────────────
+    # Recent jobs preview
+    if not jobs_df.empty:
+        st.subheader("Latest Job Postings")
+        st.dataframe(
+            jobs_df[["company", "title", "source", "location", "salary_min", "salary_max"]].head(10),
+            use_container_width=True,
+            hide_index=True,
+        )
 
-elif page == "Keyword Trends":
-    st.title("Keyword Trends")
+# ── Skill Trends page ────────────────────────────────────────────────
+
+elif page == "Skill Trends":
+    st.title("Skill Trends")
 
     try:
-        keywords_df = load_keyword_trends()
+        skills_df = load_skill_trends()
     except Exception as e:
-        st.error(f"Could not load keyword data: {e}")
+        st.error(f"Could not load skill data: {e}")
         st.stop()
 
-    if keywords_df.empty:
-        st.warning("No keyword data available.")
+    if skills_df.empty:
+        st.warning("No skill data available.")
         st.stop()
 
     # Category filter
-    categories = ["All"] + sorted(keywords_df["category"].unique().tolist())
+    categories = ["All"] + sorted(skills_df["category"].unique().tolist())
     selected_cat = st.selectbox("Filter by category", categories)
 
-    filtered = keywords_df
+    filtered = skills_df
     if selected_cat != "All":
         filtered = filtered[filtered["category"] == selected_cat]
 
-    # Bar chart: top keywords by TF-IDF
+    # Bar chart: top skills by frequency
     import plotly.express as px
 
-    top_n = st.slider("Number of keywords to show", 10, 50, 20)
-    chart_data = filtered.nlargest(top_n, "tfidf_score")
+    top_n = st.slider("Number of skills to show", 10, 50, 20)
+    chart_data = filtered.nlargest(top_n, "frequency")
 
     fig = px.bar(
         chart_data,
-        x="tfidf_score",
-        y="keyword",
-        color="subreddit",
+        x="frequency",
+        y="skill",
+        color="category",
         orientation="h",
-        title=f"Top {top_n} Keywords by TF-IDF Score",
-        labels={"tfidf_score": "TF-IDF Score", "keyword": "Keyword"},
+        title=f"Top {top_n} Skills by Frequency",
+        labels={"frequency": "Job Count", "skill": "Skill"},
     )
     fig.update_layout(yaxis={"categoryorder": "total ascending"}, height=max(400, top_n * 25))
     st.plotly_chart(fig, use_container_width=True)
 
-    # Word cloud
-    st.subheader("Word Cloud")
-    from wordcloud import WordCloud
-    import matplotlib.pyplot as plt
-
-    word_freq = dict(zip(filtered["keyword"], filtered["tfidf_score"]))
-    if word_freq:
-        wc = WordCloud(width=800, height=400, background_color="white").generate_from_frequencies(word_freq)
-        fig_wc, ax = plt.subplots(figsize=(10, 5))
-        ax.imshow(wc, interpolation="bilinear")
-        ax.axis("off")
-        st.pyplot(fig_wc)
+    # Salary by skill
+    salary_data = filtered.dropna(subset=["avg_salary"]).nlargest(top_n, "avg_salary")
+    if not salary_data.empty:
+        fig_salary = px.bar(
+            salary_data,
+            x="avg_salary",
+            y="skill",
+            color="category",
+            orientation="h",
+            title="Top Skills by Average Salary",
+            labels={"avg_salary": "Average Salary ($)", "skill": "Skill"},
+        )
+        fig_salary.update_layout(yaxis={"categoryorder": "total ascending"}, height=max(400, top_n * 25))
+        st.plotly_chart(fig_salary, use_container_width=True)
 
     # Detailed table
-    st.subheader("Keyword Details")
+    st.subheader("Skill Details")
     st.dataframe(filtered, use_container_width=True, hide_index=True)
 
-# ── Subreddit Metrics page ───────────────────────────────────────────
+# ── Market Metrics page ──────────────────────────────────────────────
 
-elif page == "Subreddit Metrics":
-    st.title("Subreddit Engagement Metrics")
+elif page == "Market Metrics":
+    st.title("Market Metrics")
 
     try:
-        metrics_df = load_subreddit_metrics()
+        metrics_df = load_market_metrics()
+        jobs_df = load_recent_jobs()
     except Exception as e:
         st.error(f"Could not load metrics: {e}")
         st.stop()
@@ -184,85 +195,108 @@ elif page == "Subreddit Metrics":
 
     import plotly.express as px
 
-    # Latest snapshot per subreddit
-    latest = metrics_df.sort_values("collected_at", ascending=False).drop_duplicates("subreddit")
+    latest = metrics_df.sort_values("collected_at", ascending=False).drop_duplicates("source")
 
-    # Grouped bar chart: avg score by subreddit
-    fig_score = px.bar(
-        latest.sort_values("avg_score", ascending=False),
-        x="subreddit",
-        y="avg_score",
-        color="category",
-        title="Average Post Score by Subreddit",
-        labels={"avg_score": "Average Score"},
-    )
-    st.plotly_chart(fig_score, use_container_width=True)
-
-    # Scatter: avg score vs avg comments
-    fig_scatter = px.scatter(
+    # Jobs by source
+    fig_source = px.bar(
         latest,
-        x="avg_score",
-        y="avg_comments",
-        size="total_posts_collected",
-        color="category",
-        hover_name="subreddit",
-        title="Engagement: Score vs Comments",
-        labels={"avg_score": "Average Score", "avg_comments": "Average Comments"},
+        x="source",
+        y="total_jobs",
+        color="source",
+        title="Jobs by Source",
+        labels={"total_jobs": "Total Jobs"},
     )
-    st.plotly_chart(fig_scatter, use_container_width=True)
+    st.plotly_chart(fig_source, use_container_width=True)
 
-    # Metrics over time (if multiple collection runs)
-    if len(metrics_df) > len(latest):
-        st.subheader("Metrics Over Time")
-        selected_sub = st.selectbox("Select subreddit", sorted(metrics_df["subreddit"].unique()))
-        sub_data = metrics_df[metrics_df["subreddit"] == selected_sub].sort_values("collected_at")
+    # Remote percentage by source
+    fig_remote = px.bar(
+        latest,
+        x="source",
+        y="remote_pct",
+        color="source",
+        title="Remote Job Percentage by Source",
+        labels={"remote_pct": "Remote %"},
+    )
+    st.plotly_chart(fig_remote, use_container_width=True)
 
-        fig_time = px.line(
-            sub_data,
-            x="collected_at",
-            y=["avg_score", "avg_comments"],
-            title=f"r/{selected_sub} — Score & Comments Over Time",
-            labels={"collected_at": "Collection Time", "value": "Value"},
-        )
-        st.plotly_chart(fig_time, use_container_width=True)
+    # Salary distributions (if job data available)
+    if not jobs_df.empty:
+        salary_jobs = jobs_df.dropna(subset=["salary_min", "salary_max"])
+        if not salary_jobs.empty:
+            salary_jobs = salary_jobs.copy()
+            salary_jobs["avg_salary"] = (salary_jobs["salary_min"] + salary_jobs["salary_max"]) / 2
+
+            fig_salary = px.box(
+                salary_jobs,
+                x="source",
+                y="avg_salary",
+                color="source",
+                title="Salary Distribution by Source",
+                labels={"avg_salary": "Average Salary ($)"},
+            )
+            st.plotly_chart(fig_salary, use_container_width=True)
+
+    # Company stage breakdown
+    if not jobs_df.empty and "company_stage" in jobs_df.columns:
+        stage_data = jobs_df.dropna(subset=["company_stage"])
+        if not stage_data.empty:
+            stage_counts = stage_data["company_stage"].value_counts().reset_index()
+            stage_counts.columns = ["company_stage", "count"]
+            fig_stage = px.pie(
+                stage_counts,
+                values="count",
+                names="company_stage",
+                title="Jobs by Company Stage",
+            )
+            st.plotly_chart(fig_stage, use_container_width=True)
 
     # Full metrics table
-    st.subheader("All Subreddit Metrics")
+    st.subheader("All Market Metrics")
     st.dataframe(latest, use_container_width=True, hide_index=True)
 
-# ── Recent Posts page ────────────────────────────────────────────────
+# ── Job Explorer page ────────────────────────────────────────────────
 
-elif page == "Recent Posts":
-    st.title("Recent Posts")
+elif page == "Job Explorer":
+    st.title("Job Explorer")
 
     try:
-        posts_df = load_recent_posts()
+        jobs_df = load_recent_jobs()
     except Exception as e:
-        st.error(f"Could not load posts: {e}")
+        st.error(f"Could not load jobs: {e}")
         st.stop()
 
-    if posts_df.empty:
-        st.warning("No posts available.")
+    if jobs_df.empty:
+        st.warning("No jobs available.")
         st.stop()
 
     # Filters
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
-        categories = ["All"] + sorted(posts_df["category"].unique().tolist())
-        selected_cat = st.selectbox("Category", categories)
+        sources = ["All"] + sorted(jobs_df["source"].unique().tolist())
+        selected_source = st.selectbox("Source", sources)
     with col2:
-        subreddits = ["All"] + sorted(posts_df["subreddit"].unique().tolist())
-        selected_sub = st.selectbox("Subreddit", subreddits)
+        remote_filter = st.selectbox("Remote", ["All", "Remote", "On-site"])
+    with col3:
+        search = st.text_input("Search (company or title)")
 
-    filtered = posts_df
-    if selected_cat != "All":
-        filtered = filtered[filtered["category"] == selected_cat]
-    if selected_sub != "All":
-        filtered = filtered[filtered["subreddit"] == selected_sub]
+    filtered = jobs_df
+    if selected_source != "All":
+        filtered = filtered[filtered["source"] == selected_source]
+    if remote_filter == "Remote":
+        filtered = filtered[filtered["remote"] == True]
+    elif remote_filter == "On-site":
+        filtered = filtered[filtered["remote"] == False]
+    if search:
+        mask = (
+            filtered["company"].str.contains(search, case=False, na=False)
+            | filtered["title"].str.contains(search, case=False, na=False)
+        )
+        filtered = filtered[mask]
 
-    st.write(f"Showing {len(filtered)} posts")
+    st.write(f"Showing {len(filtered)} jobs")
     st.dataframe(
-        filtered[["title", "subreddit", "category", "score", "num_comments", "upvote_ratio", "listing_type", "created_utc"]],
+        filtered[["company", "title", "source", "location", "remote",
+                  "salary_min", "salary_max", "company_stage", "yc_batch", "collected_at"]],
         use_container_width=True,
         hide_index=True,
     )

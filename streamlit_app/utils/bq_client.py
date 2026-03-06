@@ -17,7 +17,7 @@ def get_client() -> bigquery.Client:
 
 
 def get_dataset() -> str:
-    return os.environ.get("BQ_DATASET", "reddit_trends")
+    return os.environ.get("BQ_DATASET", "startup_pulse")
 
 
 def query_df(sql: str) -> pd.DataFrame:
