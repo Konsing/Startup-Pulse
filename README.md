@@ -86,7 +86,7 @@ scrape_hn --------/                            +--> aggregate_metrics-+
 Two parallel processing steps after text cleaning:
 
 1. **Skill Extraction** (TF-IDF + Taxonomy): Matches job descriptions against a curated taxonomy of 60+ tech skills across 4 categories (languages, frameworks, infra/cloud, data/ML). Enriches each skill with salary correlation data.
-2. **Market Metrics** (pandas): Computes per-source statistics — average salary, median salary, remote percentage, top role categories.
+2. **Market Metrics** (numpy): Computes per-source statistics — average salary, median salary, remote percentage, top role categories.
 
 ### Load
 - Deduplicates within each run and across runs (queries existing job_ids from last 24 hours)
@@ -113,13 +113,13 @@ Three tables, all partitioned by `collected_at` (DAY):
 
 The Streamlit dashboard (port 8501) has four views:
 
-**Overview** — KPI cards (total jobs tracked, top skills this week, hottest companies) with top skills and subreddits tables, skill word cloud
+**Overview** — KPI cards (total jobs, active sources, unique skills, average remote %) with top skills table, sources overview, and latest job postings
 
-**Skill Trends** — Bar chart of in-demand skills by frequency, word cloud visualization, category filter (languages/frameworks/infra/data), salary correlation data
+**Skill Trends** — Bar charts of in-demand skills by frequency and by average salary, category filter (languages/frameworks/infra/data), detailed skill table with TF-IDF scores
 
-**Market Metrics** — Salary distributions by source, remote vs on-site trends, jobs by company stage (seed/Series A/B), metrics over time
+**Market Metrics** — Jobs by source, remote percentage by source, salary distribution box plots, jobs by company stage pie chart
 
-**Job Explorer** — Searchable, filterable table of recent job postings with source, salary, and location filters
+**Job Explorer** — Searchable, filterable table of recent job postings with source, remote status, and text search filters
 
 ## Project Structure
 
@@ -232,7 +232,7 @@ SKILL_TAXONOMY = {
 The system identifies trending tech skills using two complementary approaches:
 
 1. **Taxonomy Matching**: A curated list of 60+ skills is matched against cleaned job descriptions using word-boundary regex. This catches known skills reliably.
-2. **TF-IDF Scoring**: A `TfidfVectorizer` fits across all descriptions to surface emerging terms that aren't in the taxonomy yet. Skills are ranked by frequency and enriched with average salary data for posts mentioning that skill.
+2. **TF-IDF Scoring**: A `TfidfVectorizer` fits across all descriptions to surface emerging terms that aren't in the taxonomy yet. Skills are ranked by frequency and enriched with average salary data for jobs mentioning that skill.
 
 ### Salary Extraction
 

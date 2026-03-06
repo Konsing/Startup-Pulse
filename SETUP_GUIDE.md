@@ -373,10 +373,10 @@ ORDER BY job_count DESC
 1. Go to http://localhost:8501
 2. The Overview page should now show KPI cards and data tables
 3. Navigate through the pages using the sidebar:
-   - **Overview**: Summary metrics, top skills, hottest companies
-   - **Skill Trends**: Bar chart, word cloud, salary correlations
-   - **Market Metrics**: Salary distributions, remote trends, company stages
-   - **Job Explorer**: Filterable job posting table
+   - **Overview**: KPI cards, top skills, sources overview, latest postings
+   - **Skill Trends**: Skills by frequency and salary bar charts, category filter
+   - **Market Metrics**: Jobs by source, remote %, salary distributions, company stages
+   - **Job Explorer**: Filterable and searchable job posting table
 
 **Note**: The dashboard caches query results for 5 minutes. If you just ran the pipeline, wait a moment or refresh the page.
 
@@ -391,24 +391,28 @@ The dashboard runs at http://localhost:8501 and reads directly from BigQuery.
 ### Dashboard Pages
 
 #### Overview
-- **KPI Cards**: Total jobs tracked, top skills this week, unique companies, active sources
+- **KPI Cards**: Total jobs, active sources, unique skills, average remote %
 - **Top Skills Table**: Most frequently mentioned skills with salary data
-- **Top Companies Table**: Companies with the most open listings
+- **Sources Overview Table**: Per-source job counts, average salary, remote %
+- **Latest Job Postings**: Preview of the most recent postings
 
 #### Skill Trends
 - **Category Filter**: Filter skills by languages/frameworks/infra/data & ML
-- **Top Skills Bar Chart**: Horizontal bar chart colored by category
-- **Word Cloud**: Visual representation of skill demand
+- **Top Skills Bar Chart**: Horizontal bar chart of skills by frequency, colored by category
+- **Salary by Skill Chart**: Horizontal bar chart of skills by average salary
 - **Skill Details Table**: Full data with TF-IDF scores and salary averages
 
 #### Market Metrics
-- **Salary Bar Chart**: Average salary by source
-- **Engagement Scatter Plot**: Salary vs. job count, sized by remote percentage
-- **Metrics Over Time**: Line chart of salary and job count trends per source (after multiple pipeline runs)
+- **Jobs by Source**: Bar chart of total jobs per source
+- **Remote Percentage**: Bar chart of remote job % per source
+- **Salary Distribution**: Box plot of salary ranges by source
+- **Company Stage Breakdown**: Pie chart of jobs by company stage (Seed, Series A, etc.)
 - **Full Metrics Table**: All market metrics
 
 #### Job Explorer
-- **Source & Category Filters**: Dropdown filters to narrow results
+- **Source Filter**: Filter by data source (YC, Wellfound, HN)
+- **Remote Filter**: Filter by remote/on-site
+- **Search**: Free-text search by company or job title
 - **Jobs Table**: Sortable table with company, title, salary range, location, remote status
 
 ### Customizing the Dashboard
