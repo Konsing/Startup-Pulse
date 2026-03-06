@@ -1,13 +1,54 @@
 """Centralized configuration for the Startup Pulse pipeline."""
 
 # -- Data source URLs --------------------------------------------------------
-YC_JOBS_URL = "https://www.workatastartup.com/jobs"
-WELLFOUND_JOBS_URL = "https://wellfound.com/jobs"
+YC_JOBS_BASE_URL = "https://www.workatastartup.com/jobs/l"
 HN_API_BASE = "https://hacker-news.firebaseio.com/v0"
+GREENHOUSE_API_BASE = "https://boards-api.greenhouse.io/v1/boards"
+
+# -- YC role categories (each is a separate page on workatastartup.com) ------
+YC_CATEGORY_SLUGS = [
+    "software-engineer",
+    "designer",
+    "recruiting",
+    "science",
+    "product-manager",
+    "operations",
+    "sales-manager",
+    "marketing",
+    "legal",
+    "finance",
+]
+
+# -- Greenhouse board tokens -------------------------------------------------
+# Each token maps to a company's public job board on Greenhouse.
+# API: GET {GREENHOUSE_API_BASE}/{token}/jobs?content=true
+GREENHOUSE_BOARD_TOKENS = [
+    "airbnb",
+    "airtable",
+    "brex",
+    "cloudflare",
+    "cockroachlabs",
+    "coinbase",
+    "databricks",
+    "datadog",
+    "discord",
+    "doordashusa",
+    "elastic",
+    "figma",
+    "gitlab",
+    "gusto",
+    "instacart",
+    "netlify",
+    "pagerduty",
+    "reddit",
+    "scaleai",
+    "stripe",
+    "twilio",
+    "vercel",
+]
 
 # -- Scraping settings -------------------------------------------------------
 SCRAPE_TIMEOUT_MS = 60_000          # Playwright page timeout
-SCRAPE_MAX_PAGES = 10               # Max pagination depth per source
 SCRAPE_DELAY_SECONDS = 2            # Polite delay between page loads
 
 # -- NLP settings ------------------------------------------------------------

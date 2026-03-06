@@ -27,13 +27,13 @@ def scrape_yc(**context):
     return result
 
 
-def scrape_wellfound(**context):
-    """Scrape Wellfound job listings."""
-    from src.extract.wellfound_scraper import WellfoundScraper
+def scrape_greenhouse(**context):
+    """Scrape Greenhouse job boards."""
+    from src.extract.greenhouse_scraper import GreenhouseScraper
     execution_date = context["ds"]
-    output_dir = f"/opt/airflow/data/raw/wellfound/{execution_date}"
-    result = WellfoundScraper().scrape(output_dir)
-    context["ti"].xcom_push(key="wellfound_metadata", value=result)
+    output_dir = f"/opt/airflow/data/raw/greenhouse/{execution_date}"
+    result = GreenhouseScraper().scrape(output_dir)
+    context["ti"].xcom_push(key="greenhouse_metadata", value=result)
     return result
 
 
@@ -57,7 +57,7 @@ def clean_and_normalize(**context):
     execution_date = context["ds"]
     all_jobs = []
 
-    for source in ("yc", "wellfound", "hn"):
+    for source in ("yc", "greenhouse", "hn"):
         path = f"/opt/airflow/data/raw/{source}/{execution_date}/jobs.json"
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as fh:
@@ -150,7 +150,7 @@ with DAG(
 ) as dag:
 
     scrape_yc_task = PythonOperator(task_id="scrape_yc", python_callable=scrape_yc)
-    scrape_wellfound_task = PythonOperator(task_id="scrape_wellfound", python_callable=scrape_wellfound)
+    scrape_greenhouse_task = PythonOperator(task_id="scrape_greenhouse", python_callable=scrape_greenhouse)
     scrape_hn_task = PythonOperator(task_id="scrape_hn", python_callable=scrape_hn)
 
     clean_task = PythonOperator(task_id="clean_and_normalize", python_callable=clean_and_normalize)
@@ -161,6 +161,6 @@ with DAG(
     load_task = PythonOperator(task_id="load_to_bigquery", python_callable=load_to_bigquery)
 
     # 3 scrapers in parallel -> clean -> [skills, metrics] in parallel -> load
-    [scrape_yc_task, scrape_wellfound_task, scrape_hn_task] >> clean_task
+    [scrape_yc_task, scrape_greenhouse_task, scrape_hn_task] >> clean_task
     clean_task >> [skills_task, metrics_task]
     [skills_task, metrics_task] >> load_task

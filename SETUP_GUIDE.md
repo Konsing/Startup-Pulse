@@ -14,6 +14,7 @@ This guide walks you through every step needed to get the Startup Pulse platform
 8. [Streamlit Dashboard](#8-streamlit-dashboard)
 9. [Troubleshooting](#9-troubleshooting)
 10. [Maintenance and Operations](#10-maintenance-and-operations)
+11. [Quick Start (Returning Users)](#11-quick-start-returning-users)
 
 ---
 
@@ -300,8 +301,8 @@ Open http://localhost:8080 and log in with `admin` / `admin`.
 The `startup_pulse_pipeline` DAG:
 - **Schedule**: `0 8 * * *` — runs daily at 08:00 UTC
 - **Tasks**: 7 tasks in this order:
-  1. `scrape_yc` — Scrape YC Work at a Startup (parallel)
-  2. `scrape_wellfound` — Scrape Wellfound job listings (parallel)
+  1. `scrape_yc` — Scrape YC Work at a Startup across 10 role categories (parallel)
+  2. `scrape_greenhouse` — Fetch jobs from 22 company boards via Greenhouse API (parallel)
   3. `scrape_hn` — Scrape HN "Who is Hiring?" thread (parallel)
   4. `clean_and_normalize` — Merge all sources, clean text with NLTK
   5. `extract_skills` — TF-IDF + taxonomy skill extraction (parallel with metrics)
@@ -347,7 +348,7 @@ docker compose exec airflow-webserver airflow dags trigger startup_pulse_pipelin
 ### Step 7.3: Expected Timeline
 
 A typical pipeline run takes 3-8 minutes:
-- `scrape_yc` / `scrape_wellfound` / `scrape_hn`: 1-3 minutes (runs in parallel, Playwright scraping is the slowest)
+- `scrape_yc` / `scrape_greenhouse` / `scrape_hn`: 1-3 minutes (runs in parallel; YC uses Playwright, Greenhouse and HN use APIs)
 - `clean_and_normalize`: 5-15 seconds
 - `extract_skills`: 5-10 seconds
 - `aggregate_metrics`: 2-5 seconds
@@ -410,7 +411,7 @@ The dashboard runs at http://localhost:8501 and reads directly from BigQuery.
 - **Full Metrics Table**: All market metrics
 
 #### Job Explorer
-- **Source Filter**: Filter by data source (YC, Wellfound, HN)
+- **Source Filter**: Filter by data source (YC, Greenhouse, HN)
 - **Remote Filter**: Filter by remote/on-site
 - **Search**: Free-text search by company or job title
 - **Jobs Table**: Sortable table with company, title, salary range, location, remote status
@@ -588,9 +589,63 @@ docker compose down -v
 - **Airflow metadata** (DAG run history, task logs) is in the PostgreSQL volume
 - **Pipeline code** should be committed to git
 
+### Adding a Greenhouse Board
+
+To scrape a new company from Greenhouse:
+
+1. Find the company's board token — it's the slug in their careers URL (e.g., `boards.greenhouse.io/stripe` → token is `stripe`)
+2. Verify it works: `curl -s "https://boards-api.greenhouse.io/v1/boards/TOKEN/jobs" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('jobs',[])))"`
+3. Add the token to `GREENHOUSE_BOARD_TOKENS` in `src/utils/config.py`
+4. No rebuild needed — the change is picked up on the next DAG run
+
 ### Cost Monitoring
 
 Monitor your BigQuery usage in the GCP Console:
 1. Go to https://console.cloud.google.com/billing
 2. Or check BigQuery directly: **BigQuery > Admin > Resource Management**
 3. Set up billing alerts if desired (though free-tier usage is minimal)
+
+---
+
+## 11. Quick Start (Returning Users)
+
+If you've already completed the full setup above and just need to get everything running again after a reboot:
+
+```bash
+cd startup-pulse
+
+# 1. Start Docker (if not already running)
+#    On Linux with systemd:
+sudo systemctl start docker
+#    On Docker Desktop: just open the app
+
+# 2. Start all services
+make up
+
+# 3. Wait for containers to be healthy (~30-60 seconds)
+docker compose ps
+#    Expect: postgres (healthy), airflow-webserver (healthy),
+#            airflow-scheduler (running), streamlit (running)
+
+# 4. Open the services
+#    Airflow UI: http://localhost:8080  (admin / admin)
+#    Dashboard:  http://localhost:8501
+
+# 5. (Optional) Trigger a pipeline run
+docker compose exec airflow-webserver airflow dags trigger startup_pulse_pipeline
+```
+
+If you hit the Airflow logs permission error after a fresh boot, run:
+```bash
+make down
+docker run --rm \
+  -v ./airflow/logs:/fix/logs \
+  -v ./airflow/data:/fix/data \
+  alpine chmod -R 777 /fix/logs /fix/data
+make up
+```
+
+To stop everything when you're done:
+```bash
+make down
+```

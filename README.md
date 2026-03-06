@@ -1,6 +1,6 @@
 # Startup Pulse — Job Market Intelligence Platform
 
-An automated data pipeline that scrapes startup job postings from YC, Wellfound, and Hacker News, extracts trending skills using NLP, and visualizes market signals through an interactive dashboard.
+An automated data pipeline that scrapes startup job postings from YC, Greenhouse, and Hacker News, extracts trending skills using NLP, and visualizes market signals through an interactive dashboard.
 
 Built with Apache Airflow, Google BigQuery, and Streamlit.
 
@@ -8,7 +8,7 @@ Built with Apache Airflow, Google BigQuery, and Streamlit.
 
 ```
 Job Board Scrapers
-  (Playwright + HN API)
+  (Playwright + APIs)
        |
        v
 +------------------+
@@ -20,7 +20,7 @@ Job Board Scrapers
 +--------+---------+     +-------------------+     +-----------------+
 |    EXTRACT       | --> |    TRANSFORM      | --> |      LOAD       |
 | Scrape YC,       |     | Clean text (NLTK) |     | Deduplicate     |
-| Wellfound, HN    |     | Extract skills    |     | Validate        |
+| Greenhouse, HN   |     | Extract skills    |     | Validate        |
 | in parallel      |     |   (TF-IDF +       |     | Append to       |
 |                  |     |    taxonomy)       |     |   BigQuery      |
 |                  |     | Market metrics    |     |                 |
@@ -48,11 +48,11 @@ Job Board Scrapers
 
 | Source | Method | Data |
 |--------|--------|------|
-| [Work at a Startup](https://www.workatastartup.com/jobs) (YC) | Playwright (JS-rendered) | Role, company, description, salary, YC batch |
-| [Wellfound](https://wellfound.com/jobs) | Playwright (JS-rendered) | Role, company, description, salary, equity, stage |
-| [HN "Who is Hiring?"](https://news.ycombinator.com/) | HN Firebase API | Monthly thread, 500+ postings per thread |
+| [Work at a Startup](https://www.workatastartup.com/jobs) (YC) | Playwright (JS-rendered) | 200+ roles across 10 categories, YC batch, description |
+| [Greenhouse](https://www.greenhouse.io/) (22 companies) | Public JSON API | 3,000+ roles from Stripe, Airbnb, Figma, Databricks, etc. |
+| [HN "Who is Hiring?"](https://news.ycombinator.com/) | HN Firebase API | Monthly thread, 400+ postings per thread |
 
-The pipeline scrapes all three sources daily, yielding hundreds of unique job postings per run after deduplication.
+The pipeline scrapes all three sources daily, yielding thousands of unique job postings per run after deduplication.
 
 ## Tech Stack
 
@@ -61,7 +61,7 @@ The pipeline scrapes all three sources daily, yielding hundreds of unique job po
 | Orchestration | Apache Airflow 2.11.0 | Schedule and monitor ETL pipeline |
 | Data Warehouse | Google BigQuery | Store and query structured data |
 | Visualization | Streamlit | Interactive analytics dashboard |
-| Scraping | Playwright + BeautifulSoup | Headless browser for JS-rendered pages |
+| Scraping | Playwright + Greenhouse API | Headless browser for JS pages, REST API for Greenhouse |
 | NLP | NLTK + scikit-learn TF-IDF | Text cleaning and skill extraction |
 | Infrastructure | Docker Compose | Container orchestration |
 | Database | PostgreSQL 15 | Airflow metadata storage |
@@ -71,15 +71,16 @@ The pipeline scrapes all three sources daily, yielding hundreds of unique job po
 The Airflow DAG (`startup_pulse_pipeline`) runs daily at 08:00 UTC and executes 7 tasks:
 
 ```
-scrape_yc --------\
-scrape_wellfound ---+--> clean_and_normalize --+--> extract_skills --+--> load_to_bigquery
-scrape_hn --------/                            +--> aggregate_metrics-+
+scrape_yc ----------\
+scrape_greenhouse ---+--> clean_and_normalize --+--> extract_skills ---+--> load_to_bigquery
+scrape_hn ----------/                           +--> aggregate_metrics-+
 ```
 
 ### Extract
 - Three scrapers run in parallel — one per source
-- YC and Wellfound use Playwright (headless Chromium) for JS-rendered SPAs
-- HN uses the free Firebase API (no browser needed)
+- YC uses Playwright (headless Chromium) across 10 role categories
+- Greenhouse uses the free, unauthenticated Job Board API across 22 company boards
+- HN uses the Firebase API (no browser needed)
 - Each scraper normalizes data into a shared schema before writing to disk
 
 ### Transform
@@ -138,7 +139,7 @@ startup-pulse/
 ├── src/
 │   ├── extract/
 │   │   ├── yc_scraper.py          # YC Work at a Startup scraper (Playwright)
-│   │   ├── wellfound_scraper.py   # Wellfound scraper (Playwright)
+│   │   ├── greenhouse_scraper.py  # Greenhouse Job Board API scraper (REST)
 │   │   └── hn_scraper.py          # HN Who is Hiring? scraper (API)
 │   ├── transform/
 │   │   ├── text_cleaner.py        # NLTK text preprocessing pipeline
@@ -163,7 +164,7 @@ startup-pulse/
 ├── tests/
 │   ├── test_hn_scraper.py
 │   ├── test_yc_scraper.py
-│   ├── test_wellfound_scraper.py
+│   ├── test_greenhouse_scraper.py
 │   ├── test_text_cleaner.py
 │   ├── test_skill_extractor.py
 │   └── test_metrics_aggregator.py
@@ -208,13 +209,12 @@ All pipeline settings are centralized in `src/utils/config.py`:
 
 ```python
 # Data source URLs
-YC_JOBS_URL = "https://www.workatastartup.com/jobs"
-WELLFOUND_JOBS_URL = "https://wellfound.com/jobs"
+YC_JOBS_BASE_URL = "https://www.workatastartup.com/jobs/l"
+GREENHOUSE_API_BASE = "https://boards-api.greenhouse.io/v1/boards"
 HN_API_BASE = "https://hacker-news.firebaseio.com/v0"
 
-# Scraping settings
-SCRAPE_MAX_PAGES = 10       # Max pagination depth per source
-SCRAPE_DELAY_SECONDS = 2    # Polite delay between page loads
+# 22 company boards scraped via Greenhouse public API
+GREENHOUSE_BOARD_TOKENS = ["stripe", "airbnb", "figma", "databricks", ...]
 
 # Skill taxonomy (60+ skills across 4 categories)
 SKILL_TAXONOMY = {
@@ -246,7 +246,7 @@ Jobs are deduplicated at two levels:
 
 ### Error Resilience
 
-- Individual scraper failures don't block the pipeline — if Wellfound is down, YC and HN data still flows
+- Individual scraper failures don't block the pipeline — if one source is down, others still flow
 - Airflow retries each task up to 2 times with exponential backoff
 - BigQuery load retries on `ServiceUnavailable` errors
 - Missing BigQuery tables are auto-created on first load attempt

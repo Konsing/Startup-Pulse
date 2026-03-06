@@ -1,8 +1,8 @@
 # src/extract/yc_scraper.py
 """Work at a Startup (YC) job scraper using Playwright.
 
-Navigates the JS-rendered job listing pages, extracts job cards,
-and normalizes them into the shared job schema.
+Navigates the JS-rendered job listing pages across all role categories,
+extracts job cards, and normalizes them into the shared job schema.
 """
 
 import hashlib
@@ -14,45 +14,47 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.utils.config import YC_JOBS_URL, SCRAPE_DELAY_SECONDS, SCRAPE_MAX_PAGES, SCRAPE_TIMEOUT_MS
+from src.utils.config import (
+    YC_JOBS_BASE_URL,
+    YC_CATEGORY_SLUGS,
+    SCRAPE_DELAY_SECONDS,
+    SCRAPE_TIMEOUT_MS,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class YCScraper:
-    """Scrapes job listings from workatastartup.com."""
+    """Scrapes job listings from workatastartup.com across all role categories."""
 
     def scrape(self, output_dir: str) -> dict:
-        """Launch a headless browser, paginate through listings, and save.
-
-        Args:
-            output_dir: Directory where ``jobs.json`` will be written.
+        """Launch a headless browser, visit each role category page, and save.
 
         Returns:
             Metadata dict with ``total_jobs``.
         """
         from playwright.sync_api import sync_playwright
 
-        raw_jobs = []
+        seen_urls: set[str] = set()
+        raw_jobs: list[dict] = []
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
             page.set_default_timeout(SCRAPE_TIMEOUT_MS)
 
-            page.goto(YC_JOBS_URL)
-            page.wait_for_load_state("networkidle")
+            for slug in YC_CATEGORY_SLUGS:
+                url = f"{YC_JOBS_BASE_URL}/{slug}"
+                page.goto(url)
+                page.wait_for_load_state("networkidle")
 
-            for page_num in range(SCRAPE_MAX_PAGES):
-                logger.info("YC scrape: page %d", page_num + 1)
                 cards = self._extract_cards(page)
-                if not cards:
-                    break
-                raw_jobs.extend(cards)
+                # Deduplicate across categories (same job can appear in multiple)
+                new_cards = [c for c in cards if c.get("url") not in seen_urls]
+                seen_urls.update(c.get("url", "") for c in new_cards)
+                raw_jobs.extend(new_cards)
 
-                # Try to click next / load more
-                if not self._load_next_page(page):
-                    break
+                logger.info("YC scrape [%s]: %d jobs (%d new)", slug, len(cards), len(new_cards))
                 time.sleep(SCRAPE_DELAY_SECONDS)
 
             browser.close()
@@ -84,12 +86,10 @@ class YCScraper:
         for el in job_name_elements:
             try:
                 info = el.evaluate("""el => {
-                    // Title + URL from the <a> inside .job-name
                     const a = el.querySelector('a');
                     const title = a ? a.innerText.trim() : '';
                     const url = a ? a.getAttribute('href') : '';
 
-                    // Walk up to the card container (.bg-beige-lighter)
                     let card = el;
                     for (let i = 0; i < 10; i++) {
                         card = card.parentElement;
@@ -97,21 +97,18 @@ class YCScraper:
                         if (card.className && card.className.includes('bg-beige-lighter')) break;
                     }
 
-                    // Company name from .company-details .font-bold
                     let company = '';
                     if (card) {
                         const bold = card.querySelector('.company-details .font-bold');
                         if (bold) company = bold.innerText.trim();
                     }
 
-                    // Job details from sibling .job-details spans
                     const parent = el.parentElement;
                     const details = parent ? parent.querySelector('.job-details') : null;
                     const spans = details
                         ? Array.from(details.querySelectorAll('span')).map(s => s.innerText.trim())
                         : [];
 
-                    // Full card text for description
                     const description = card ? card.innerText.trim() : '';
 
                     return {title, url, company, spans, description};
@@ -120,22 +117,19 @@ class YCScraper:
                 if not info.get("title") or not info.get("company"):
                     continue
 
-                # Parse location from spans (usually index 1)
                 spans = info.get("spans", [])
                 location = spans[1] if len(spans) > 1 else ""
 
-                # Extract YC batch from company name, e.g. "Mason (W16)"
                 batch_match = re.search(r"\(([WSF]\d{2})\)", info.get("company", ""))
                 batch = batch_match.group(1) if batch_match else ""
 
-                # Clean company name: remove batch and \xa0
                 company = re.sub(r"\s*\([WSF]\d{2}\)\s*", "", info["company"]).replace("\xa0", " ").strip()
 
                 cards.append({
                     "title": info["title"],
                     "company": company,
                     "location": location,
-                    "salary": "",  # YC listings don't show salary inline
+                    "salary": "",
                     "description": info.get("description", ""),
                     "url": info.get("url", ""),
                     "batch": batch,
@@ -146,23 +140,10 @@ class YCScraper:
 
         return cards
 
-    def _load_next_page(self, page) -> bool:
-        """Attempt to load the next page of results. Returns False if no more."""
-        try:
-            next_btn = page.query_selector("button:has-text('Load more'), button:has-text('Next'), [class*='next']")
-            if next_btn and next_btn.is_visible():
-                next_btn.click()
-                page.wait_for_load_state("networkidle")
-                return True
-        except Exception:
-            pass
-        return False
-
     def _normalize(self, raw: dict) -> dict:
         """Normalize a raw scraped job into the shared schema."""
         salary_min, salary_max = self._parse_salary(raw.get("salary", ""))
 
-        # Generate stable job_id from company + title + url
         id_str = f"{raw.get('company', '')}-{raw.get('title', '')}-{raw.get('url', '')}"
         job_id = f"yc_{hashlib.md5(id_str.encode()).hexdigest()[:12]}"
 
@@ -194,7 +175,6 @@ class YCScraper:
         if not text:
             return None, None
 
-        # Match patterns like $150K, $150k, $150,000
         amounts = re.findall(r"\$\s*([\d,]+)\s*[kK]?", text)
         if len(amounts) < 1:
             return None, None
@@ -203,7 +183,7 @@ class YCScraper:
         for amt in amounts:
             num = int(amt.replace(",", ""))
             if num < 1000:
-                num *= 1000  # $150K -> 150000
+                num *= 1000
             parsed.append(num)
 
         if len(parsed) == 1:
