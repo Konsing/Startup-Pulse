@@ -1,6 +1,6 @@
-"""BigQuery loader for the Reddit Trends pipeline.
+"""BigQuery loader for the Startup Pulse pipeline.
 
-Loads cleaned posts, keyword trends, and subreddit metrics into BigQuery
+Loads cleaned jobs, skill trends, and market metrics into BigQuery
 with deduplication, validation, and retry logic.
 """
 
@@ -14,7 +14,7 @@ import pandas as pd
 from google.api_core.exceptions import NotFound, ServiceUnavailable
 from google.cloud import bigquery
 
-from src.utils.deduplication import deduplicate_in_run, get_existing_post_ids
+from src.utils.deduplication import deduplicate_in_run, get_existing_job_ids
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ class BigQueryLoader:
 
     def __init__(self) -> None:
         self.project_id = os.environ["GCP_PROJECT_ID"]
-        self.dataset = os.environ.get("BQ_DATASET", "reddit_trends")
+        self.dataset = os.environ.get("BQ_DATASET", "startup_pulse")
         self.client = bigquery.Client(project=self.project_id)
         logger.info(
             "BigQueryLoader initialized (project=%s, dataset=%s).",
@@ -40,45 +40,45 @@ class BigQueryLoader:
     def load_all(
         self,
         cleaned_path: str,
-        keywords_path: str,
+        skills_path: str,
         metrics_path: str,
     ) -> dict:
         """Orchestrate loading of all three datasets.
 
         Args:
-            cleaned_path: Path to cleaned ``posts.json``.
-            keywords_path: Path to ``keywords.json``.
+            cleaned_path: Path to cleaned ``jobs.json``.
+            skills_path: Path to ``skills.json``.
             metrics_path: Path to ``metrics.json``.
 
         Returns:
-            Dict with counts: ``posts_loaded``, ``keywords_loaded``,
+            Dict with counts: ``jobs_loaded``, ``skills_loaded``,
             ``metrics_loaded``.
         """
-        logger.info("Starting BigQuery load from %s, %s, %s", cleaned_path, keywords_path, metrics_path)
+        logger.info("Starting BigQuery load from %s, %s, %s", cleaned_path, skills_path, metrics_path)
 
         with open(cleaned_path, "r", encoding="utf-8") as fh:
-            posts_data = json.load(fh)
+            jobs_data = json.load(fh)
 
-        with open(keywords_path, "r", encoding="utf-8") as fh:
-            keywords_data = json.load(fh)
+        with open(skills_path, "r", encoding="utf-8") as fh:
+            skills_data = json.load(fh)
 
         with open(metrics_path, "r", encoding="utf-8") as fh:
             metrics_data = json.load(fh)
 
-        posts_loaded = self.load_posts(posts_data)
-        keywords_loaded = self.load_keywords(keywords_data)
+        jobs_loaded = self.load_jobs(jobs_data)
+        skills_loaded = self.load_skills(skills_data)
         metrics_loaded = self.load_metrics(metrics_data)
 
         result = {
-            "posts_loaded": posts_loaded,
-            "keywords_loaded": keywords_loaded,
+            "jobs_loaded": jobs_loaded,
+            "skills_loaded": skills_loaded,
             "metrics_loaded": metrics_loaded,
         }
         logger.info("BigQuery load complete: %s", result)
         return result
 
-    def load_posts(self, posts_data: list[dict]) -> int:
-        """Load post records into the ``raw_posts`` table.
+    def load_jobs(self, jobs_data: list[dict]) -> int:
+        """Load job records into the ``raw_jobs`` table.
 
         Performs in-run deduplication, cross-run deduplication against
         BigQuery, validates rows, and appends to the table.
@@ -86,82 +86,76 @@ class BigQueryLoader:
         Returns:
             Number of rows loaded.
         """
-        if not posts_data:
-            logger.warning("No posts to load.")
+        if not jobs_data:
+            logger.warning("No jobs to load.")
             return 0
 
-        table_id = f"{self.project_id}.{self.dataset}.raw_posts"
+        table_id = f"{self.project_id}.{self.dataset}.raw_jobs"
 
         # In-run deduplication
-        posts_data = deduplicate_in_run(posts_data)
+        jobs_data = deduplicate_in_run(jobs_data)
 
         # Cross-run deduplication
-        existing_ids = get_existing_post_ids(self.client, table_id)
+        existing_ids = get_existing_job_ids(self.client, table_id)
         if existing_ids:
-            before = len(posts_data)
-            posts_data = [p for p in posts_data if p["post_id"] not in existing_ids]
+            before = len(jobs_data)
+            jobs_data = [j for j in jobs_data if j["job_id"] not in existing_ids]
             logger.info(
-                "Cross-run dedup: filtered %d -> %d posts.", before, len(posts_data)
+                "Cross-run dedup: filtered %d -> %d jobs.", before, len(jobs_data)
             )
 
-        if not posts_data:
-            logger.info("All posts already loaded; nothing to insert.")
+        if not jobs_data:
+            logger.info("All jobs already loaded; nothing to insert.")
             return 0
 
-        df = pd.DataFrame(posts_data)
+        df = pd.DataFrame(jobs_data)
 
-        # Validate: drop rows with null post_id
-        null_ids = df["post_id"].isna().sum()
+        # Validate: drop rows with null job_id
+        null_ids = df["job_id"].isna().sum()
         if null_ids:
-            logger.warning("Dropping %d rows with null post_id.", null_ids)
-            df = df.dropna(subset=["post_id"])
+            logger.warning("Dropping %d rows with null job_id.", null_ids)
+            df = df.dropna(subset=["job_id"])
 
-        # Truncate selftext to 10K chars
-        if "selftext" in df.columns:
-            df["selftext"] = df["selftext"].astype(str).str[:10000]
+        # Truncate description to 10K chars
+        if "description" in df.columns:
+            df["description"] = df["description"].astype(str).str[:10000]
 
         # Convert timestamp columns
-        for ts_col in ("created_utc", "collected_at"):
-            if ts_col in df.columns:
-                df[ts_col] = pd.to_datetime(df[ts_col], utc=True)
-
-        # Ensure correct integer dtypes
-        for int_col in ("score", "num_comments"):
-            if int_col in df.columns:
-                df[int_col] = df[int_col].astype(int)
+        if "collected_at" in df.columns:
+            df["collected_at"] = pd.to_datetime(df["collected_at"], utc=True)
 
         row_count = len(df)
         self._load_dataframe(df, table_id)
-        logger.info("Loaded %d posts to %s.", row_count, table_id)
+        logger.info("Loaded %d jobs to %s.", row_count, table_id)
         return row_count
 
-    def load_keywords(self, keywords_data: list[dict]) -> int:
-        """Load keyword trend records into the ``keyword_trends`` table.
+    def load_skills(self, skills_data: list[dict]) -> int:
+        """Load skill trend records into the ``skill_trends`` table.
 
         Returns:
             Number of rows loaded.
         """
-        if not keywords_data:
-            logger.warning("No keywords to load.")
+        if not skills_data:
+            logger.warning("No skills to load.")
             return 0
 
-        table_id = f"{self.project_id}.{self.dataset}.keyword_trends"
+        table_id = f"{self.project_id}.{self.dataset}.skill_trends"
 
         # Add collected_at timestamp
         now = datetime.now(timezone.utc).isoformat()
-        for record in keywords_data:
+        for record in skills_data:
             record["collected_at"] = now
 
-        df = pd.DataFrame(keywords_data)
+        df = pd.DataFrame(skills_data)
         df["collected_at"] = pd.to_datetime(df["collected_at"], utc=True)
 
         row_count = len(df)
         self._load_dataframe(df, table_id)
-        logger.info("Loaded %d keyword records to %s.", row_count, table_id)
+        logger.info("Loaded %d skill records to %s.", row_count, table_id)
         return row_count
 
     def load_metrics(self, metrics_data: list[dict]) -> int:
-        """Load subreddit metric records into the ``subreddit_metrics`` table.
+        """Load market metric records into the ``market_metrics`` table.
 
         Returns:
             Number of rows loaded.
@@ -170,7 +164,7 @@ class BigQueryLoader:
             logger.warning("No metrics to load.")
             return 0
 
-        table_id = f"{self.project_id}.{self.dataset}.subreddit_metrics"
+        table_id = f"{self.project_id}.{self.dataset}.market_metrics"
 
         df = pd.DataFrame(metrics_data)
         df["collected_at"] = pd.to_datetime(df["collected_at"], utc=True)
@@ -227,10 +221,7 @@ class BigQueryLoader:
                     raise
 
     def _create_table_from_init(self, table_id: str) -> None:
-        """Attempt to create a missing table by running the init script logic.
-
-        This is a fallback for when tables haven't been created yet.
-        """
+        """Attempt to create a missing table by running the init script logic."""
         from scripts.init_bigquery import main as init_main
 
         logger.info("Running BigQuery table initialization for %s...", table_id)

@@ -9,9 +9,9 @@ from src.utils.config import BQ_LOCATION
 
 
 def main() -> None:
-    """Create the BigQuery dataset and tables for the Reddit trends pipeline."""
+    """Create the BigQuery dataset and tables for the Startup Pulse pipeline."""
     project_id = os.environ["GCP_PROJECT_ID"]
-    dataset_name = os.environ.get("BQ_DATASET", "reddit_trends")
+    dataset_name = os.environ.get("BQ_DATASET", "startup_pulse")
 
     client = bigquery.Client(project=project_id)
 
@@ -25,78 +25,71 @@ def main() -> None:
 
     full_prefix = f"{project_id}.{dataset_name}"
 
-    # ── Table: raw_posts ──────────────────────────────────────────────
-    raw_posts_schema = [
-        bigquery.SchemaField("post_id", "STRING", mode="REQUIRED"),
-        bigquery.SchemaField("subreddit", "STRING", mode="REQUIRED"),
-        bigquery.SchemaField("category", "STRING", mode="REQUIRED"),
+    # ── Table: raw_jobs ────────────────────────────────────────────────
+    raw_jobs_schema = [
+        bigquery.SchemaField("job_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("source", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("company", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("title", "STRING", mode="REQUIRED"),
-        bigquery.SchemaField("selftext", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("cleaned_title", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("cleaned_selftext", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("author", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("score", "INTEGER", mode="REQUIRED"),
-        bigquery.SchemaField("upvote_ratio", "FLOAT", mode="NULLABLE"),
-        bigquery.SchemaField("num_comments", "INTEGER", mode="REQUIRED"),
+        bigquery.SchemaField("description", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("cleaned_description", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("salary_min", "INTEGER", mode="NULLABLE"),
+        bigquery.SchemaField("salary_max", "INTEGER", mode="NULLABLE"),
+        bigquery.SchemaField("currency", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("location", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("remote", "BOOLEAN", mode="NULLABLE"),
+        bigquery.SchemaField("company_stage", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("yc_batch", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("equity", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("url", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("permalink", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("is_self", "BOOLEAN", mode="NULLABLE"),
-        bigquery.SchemaField("created_utc", "TIMESTAMP", mode="NULLABLE"),
         bigquery.SchemaField("collected_at", "TIMESTAMP", mode="REQUIRED"),
-        bigquery.SchemaField("flair", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("listing_type", "STRING", mode="NULLABLE"),
     ]
 
     _create_table(
         client,
-        table_id=f"{full_prefix}.raw_posts",
-        schema=raw_posts_schema,
+        table_id=f"{full_prefix}.raw_jobs",
+        schema=raw_jobs_schema,
         partition_field="collected_at",
-        clustering_fields=["subreddit", "category"],
+        clustering_fields=["source", "company_stage"],
     )
 
-    # ── Table: keyword_trends ─────────────────────────────────────────
-    keyword_trends_schema = [
-        bigquery.SchemaField("keyword", "STRING", mode="REQUIRED"),
-        bigquery.SchemaField("subreddit", "STRING", mode="REQUIRED"),
+    # ── Table: skill_trends ────────────────────────────────────────────
+    skill_trends_schema = [
+        bigquery.SchemaField("skill", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("category", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("frequency", "INTEGER", mode="REQUIRED"),
         bigquery.SchemaField("tfidf_score", "FLOAT", mode="REQUIRED"),
-        bigquery.SchemaField("num_posts", "INTEGER", mode="REQUIRED"),
-        bigquery.SchemaField("avg_score", "FLOAT", mode="NULLABLE"),
-        bigquery.SchemaField("avg_comments", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("avg_salary", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("num_jobs", "INTEGER", mode="REQUIRED"),
         bigquery.SchemaField("collected_at", "TIMESTAMP", mode="REQUIRED"),
     ]
 
     _create_table(
         client,
-        table_id=f"{full_prefix}.keyword_trends",
-        schema=keyword_trends_schema,
-        partition_field="collected_at",
-        clustering_fields=["category", "subreddit"],
-    )
-
-    # ── Table: subreddit_metrics ──────────────────────────────────────
-    subreddit_metrics_schema = [
-        bigquery.SchemaField("subreddit", "STRING", mode="REQUIRED"),
-        bigquery.SchemaField("category", "STRING", mode="REQUIRED"),
-        bigquery.SchemaField("total_posts_collected", "INTEGER", mode="REQUIRED"),
-        bigquery.SchemaField("avg_score", "FLOAT", mode="NULLABLE"),
-        bigquery.SchemaField("median_score", "FLOAT", mode="NULLABLE"),
-        bigquery.SchemaField("max_score", "INTEGER", mode="NULLABLE"),
-        bigquery.SchemaField("avg_comments", "FLOAT", mode="NULLABLE"),
-        bigquery.SchemaField("total_comments", "INTEGER", mode="NULLABLE"),
-        bigquery.SchemaField("avg_upvote_ratio", "FLOAT", mode="NULLABLE"),
-        bigquery.SchemaField("posting_rate_per_hour", "FLOAT", mode="NULLABLE"),
-        bigquery.SchemaField("collected_at", "TIMESTAMP", mode="REQUIRED"),
-    ]
-
-    _create_table(
-        client,
-        table_id=f"{full_prefix}.subreddit_metrics",
-        schema=subreddit_metrics_schema,
+        table_id=f"{full_prefix}.skill_trends",
+        schema=skill_trends_schema,
         partition_field="collected_at",
         clustering_fields=["category"],
+    )
+
+    # ── Table: market_metrics ──────────────────────────────────────────
+    market_metrics_schema = [
+        bigquery.SchemaField("source", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("role_category", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("total_jobs", "INTEGER", mode="REQUIRED"),
+        bigquery.SchemaField("avg_salary", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("median_salary", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("remote_pct", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("top_skills", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("collected_at", "TIMESTAMP", mode="REQUIRED"),
+    ]
+
+    _create_table(
+        client,
+        table_id=f"{full_prefix}.market_metrics",
+        schema=market_metrics_schema,
+        partition_field="collected_at",
+        clustering_fields=["source", "role_category"],
     )
 
     print("All tables initialized successfully.")
