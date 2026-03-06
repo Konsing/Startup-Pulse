@@ -1,37 +1,39 @@
-# Reddit Trends Analysis Platform
+# Startup Pulse — Job Market Intelligence Platform
 
-An automated data pipeline that collects posts from popular subreddits, identifies trending topics using NLP, and visualizes engagement patterns through an interactive dashboard.
+An automated data pipeline that scrapes startup job postings from YC, Wellfound, and Hacker News, extracts trending skills using NLP, and visualizes market signals through an interactive dashboard.
 
 Built with Apache Airflow, Google BigQuery, and Streamlit.
 
 ## Architecture
 
 ```
-Reddit API (PRAW)
+Job Board Scrapers
+  (Playwright + HN API)
        |
        v
 +------------------+
-|   Apache Airflow |     Every 6 hours (0 */6 * * *)
+|   Apache Airflow |     Daily at 08:00 UTC
 |   (Scheduler)    |
 +--------+---------+
          |
          v
 +--------+---------+     +-------------------+     +-----------------+
 |    EXTRACT       | --> |    TRANSFORM      | --> |      LOAD       |
-| Collect hot/top  |     | Clean text (NLTK) |     | Deduplicate     |
-| posts from 9     |     | Extract keywords  |     | Validate        |
-| subreddits       |     |   (TF-IDF)        |     | Append to       |
-|                  |     | Aggregate metrics |     |   BigQuery      |
+| Scrape YC,       |     | Clean text (NLTK) |     | Deduplicate     |
+| Wellfound, HN    |     | Extract skills    |     | Validate        |
+| in parallel      |     |   (TF-IDF +       |     | Append to       |
+|                  |     |    taxonomy)       |     |   BigQuery      |
+|                  |     | Market metrics    |     |                 |
 +------------------+     +-------------------+     +-----------------+
                                                           |
                                                           v
                                                    +-----------+
                                                    |  BigQuery  |
                                                    | 3 tables:  |
-                                                   | raw_posts  |
-                                                   | keyword_   |
+                                                   | raw_jobs   |
+                                                   | skill_     |
                                                    |   trends   |
-                                                   | subreddit_ |
+                                                   | market_    |
                                                    |   metrics  |
                                                    +-----+-----+
                                                          |
@@ -42,15 +44,15 @@ Reddit API (PRAW)
                                                    +-----------+
 ```
 
-## What It Tracks
+## Data Sources
 
-| Category | Subreddits |
-|----------|------------|
-| Technology | r/technology, r/programming, r/artificial |
-| Finance | r/wallstreetbets, r/stocks, r/CryptoCurrency |
-| Gaming | r/gaming, r/pcgaming, r/Games |
+| Source | Method | Data |
+|--------|--------|------|
+| [Work at a Startup](https://www.workatastartup.com/jobs) (YC) | Playwright (JS-rendered) | Role, company, description, salary, YC batch |
+| [Wellfound](https://wellfound.com/jobs) | Playwright (JS-rendered) | Role, company, description, salary, equity, stage |
+| [HN "Who is Hiring?"](https://news.ycombinator.com/) | HN Firebase API | Monthly thread, 500+ postings per thread |
 
-The pipeline collects up to 100 posts per subreddit per run (50 hot + 50 top), yielding ~500-700 unique posts every 6 hours after deduplication.
+The pipeline scrapes all three sources daily, yielding hundreds of unique job postings per run after deduplication.
 
 ## Tech Stack
 
@@ -59,44 +61,35 @@ The pipeline collects up to 100 posts per subreddit per run (50 hot + 50 top), y
 | Orchestration | Apache Airflow 2.11.0 | Schedule and monitor ETL pipeline |
 | Data Warehouse | Google BigQuery | Store and query structured data |
 | Visualization | Streamlit | Interactive analytics dashboard |
-| Data Collection | PRAW (Python Reddit API Wrapper) | Fetch posts from Reddit |
-| NLP | NLTK + scikit-learn TF-IDF | Text cleaning and keyword extraction |
+| Scraping | Playwright + BeautifulSoup | Headless browser for JS-rendered pages |
+| NLP | NLTK + scikit-learn TF-IDF | Text cleaning and skill extraction |
 | Infrastructure | Docker Compose | Container orchestration |
 | Database | PostgreSQL 15 | Airflow metadata storage |
 
 ## ETL Pipeline
 
-The Airflow DAG (`reddit_trends_pipeline`) runs every 6 hours and executes 5 tasks:
+The Airflow DAG (`startup_pulse_pipeline`) runs daily at 08:00 UTC and executes 7 tasks:
 
 ```
-extract_reddit_posts
-        |
-        v
-transform_clean_text
-       / \
-      v   v
-extract   aggregate
-keywords  metrics
-      \   /
-       v v
-load_to_bigquery
+scrape_yc --------\
+scrape_wellfound ---+--> clean_and_normalize --+--> extract_skills --+--> load_to_bigquery
+scrape_hn --------/                            +--> aggregate_metrics-+
 ```
 
 ### Extract
-- Connects to Reddit via OAuth script credentials (PRAW)
-- Fetches `hot` and `top` listings from each subreddit
-- Retry logic with exponential backoff on API errors
-- One subreddit failure does not block the pipeline
+- Three scrapers run in parallel — one per source
+- YC and Wellfound use Playwright (headless Chromium) for JS-rendered SPAs
+- HN uses the free Firebase API (no browser needed)
+- Each scraper normalizes data into a shared schema before writing to disk
 
 ### Transform
-Three parallel-capable processing steps:
+Two parallel processing steps after text cleaning:
 
-1. **Text Cleaning** (NLTK): Lowercase, remove URLs/markdown/special characters, tokenize, remove stop words (English + Reddit-specific), lemmatize
-2. **Keyword Extraction** (TF-IDF): Groups posts by subreddit, fits `TfidfVectorizer(ngram_range=(1,2))`, ranks keywords by average TF-IDF score, computes engagement correlation
-3. **Metrics Aggregation** (pandas): Calculates per-subreddit statistics — average score, median score, comment counts, upvote ratios, posting rate
+1. **Skill Extraction** (TF-IDF + Taxonomy): Matches job descriptions against a curated taxonomy of 60+ tech skills across 4 categories (languages, frameworks, infra/cloud, data/ML). Enriches each skill with salary correlation data.
+2. **Market Metrics** (pandas): Computes per-source statistics — average salary, median salary, remote percentage, top role categories.
 
 ### Load
-- Deduplicates within each run (hot+top overlap) and across runs (query existing post_ids)
+- Deduplicates within each run and across runs (queries existing job_ids from last 24 hours)
 - Validates data (null checks, text truncation, type enforcement)
 - Appends to BigQuery tables with retry logic on transient errors
 
@@ -104,56 +97,58 @@ Three parallel-capable processing steps:
 
 Three tables, all partitioned by `collected_at` (DAY):
 
-**`raw_posts`** — Every collected post with original and cleaned text
-- Clustered by `subreddit, category`
-- Key columns: `post_id`, `title`, `score`, `num_comments`, `cleaned_title`, `cleaned_selftext`
+**`raw_jobs`** — Every collected job posting with original and cleaned description
+- Clustered by `source, company_stage`
+- Key columns: `job_id`, `company`, `title`, `salary_min`, `salary_max`, `remote`, `yc_batch`
 
-**`keyword_trends`** — TF-IDF keyword rankings per collection window
-- Clustered by `category, subreddit`
-- Key columns: `keyword`, `tfidf_score`, `frequency`, `avg_score`, `avg_comments`
-
-**`subreddit_metrics`** — Aggregated engagement stats per subreddit
+**`skill_trends`** — Skill frequency and salary data per collection window
 - Clustered by `category`
-- Key columns: `avg_score`, `median_score`, `total_comments`, `posting_rate_per_hour`
+- Key columns: `skill`, `tfidf_score`, `frequency`, `avg_salary`, `num_jobs`
+
+**`market_metrics`** — Aggregated market stats per source
+- Clustered by `source, role_category`
+- Key columns: `avg_salary`, `median_salary`, `remote_pct`, `total_jobs`
 
 ## Dashboard
 
 The Streamlit dashboard (port 8501) has four views:
 
-**Overview** — KPI cards (subreddits tracked, total posts, avg score, unique keywords) with top keywords and subreddits tables
+**Overview** — KPI cards (total jobs tracked, top skills this week, hottest companies) with top skills and subreddits tables, skill word cloud
 
-**Keyword Trends** — Horizontal bar chart of top keywords by TF-IDF score, word cloud visualization, category filter, detailed keyword table
+**Skill Trends** — Bar chart of in-demand skills by frequency, word cloud visualization, category filter (languages/frameworks/infra/data), salary correlation data
 
-**Subreddit Metrics** — Bar chart of average scores, scatter plot of score vs. comments, metrics over time with subreddit selector
+**Market Metrics** — Salary distributions by source, remote vs on-site trends, jobs by company stage (seed/Series A/B), metrics over time
 
-**Recent Posts** — Filterable/sortable table of collected posts with category and subreddit dropdowns
+**Job Explorer** — Searchable, filterable table of recent job postings with source, salary, and location filters
 
 ## Project Structure
 
 ```
-reddit-trends/
+startup-pulse/
 ├── docker-compose.yml          # 5 services: postgres, airflow-init, webserver, scheduler, streamlit
 ├── Makefile                    # make up/down/restart/logs/build/init-bq
 ├── .env.example                # Template for environment variables
 │
 ├── airflow/
-│   ├── Dockerfile              # apache/airflow:2.11.0 + Python dependencies
-│   ├── requirements.txt        # praw, google-cloud-bigquery, nltk, scikit-learn, pandas
+│   ├── Dockerfile              # apache/airflow:2.11.0 + Playwright + Python deps
+│   ├── requirements.txt        # playwright, beautifulsoup4, google-cloud-bigquery, nltk, scikit-learn
 │   └── dags/
-│       └── reddit_trends_dag.py
+│       └── startup_pulse_dag.py
 │
 ├── src/
 │   ├── extract/
-│   │   └── reddit_collector.py     # PRAW-based post collection with retries
+│   │   ├── yc_scraper.py          # YC Work at a Startup scraper (Playwright)
+│   │   ├── wellfound_scraper.py   # Wellfound scraper (Playwright)
+│   │   └── hn_scraper.py          # HN Who is Hiring? scraper (API)
 │   ├── transform/
-│   │   ├── text_cleaner.py         # NLTK text preprocessing pipeline
-│   │   ├── keyword_extractor.py    # TF-IDF keyword ranking
-│   │   └── metrics_aggregator.py   # Engagement statistics
+│   │   ├── text_cleaner.py        # NLTK text preprocessing pipeline
+│   │   ├── skill_extractor.py     # TF-IDF + taxonomy skill extraction
+│   │   └── metrics_aggregator.py  # Market statistics
 │   ├── load/
-│   │   └── bigquery_loader.py      # BigQuery insertion with deduplication
+│   │   └── bigquery_loader.py     # BigQuery insertion with deduplication
 │   └── utils/
-│       ├── config.py               # Centralized configuration
-│       └── deduplication.py        # In-run and cross-run dedup logic
+│       ├── config.py              # Centralized configuration + skill taxonomy
+│       └── deduplication.py       # In-run and cross-run dedup logic
 │
 ├── streamlit_app/
 │   ├── Dockerfile              # python:3.11-slim + streamlit + plotly
@@ -165,8 +160,15 @@ reddit-trends/
 ├── scripts/
 │   └── init_bigquery.py        # One-time dataset and table creation
 │
+├── tests/
+│   ├── test_hn_scraper.py
+│   ├── test_yc_scraper.py
+│   ├── test_wellfound_scraper.py
+│   ├── test_text_cleaner.py
+│   ├── test_skill_extractor.py
+│   └── test_metrics_aggregator.py
+│
 └── credentials/                # GCP service account key (gitignored)
-    └── .gitkeep
 ```
 
 ## Quick Start
@@ -174,7 +176,7 @@ reddit-trends/
 ```bash
 # 1. Clone and configure
 cp .env.example .env
-# Edit .env with your Reddit API and GCP credentials
+# Edit .env with your GCP credentials
 
 # 2. Place GCP service account key
 cp /path/to/your/service-account.json credentials/service-account.json
@@ -191,61 +193,60 @@ make init-bq
 # Streamlit:  http://localhost:8501
 ```
 
-See [SETUP_GUIDE.md](SETUP_GUIDE.md) for detailed step-by-step instructions including Reddit API and GCP setup.
+See [SETUP_GUIDE.md](SETUP_GUIDE.md) for detailed step-by-step instructions including GCP setup.
 
 ## Free-Tier Budget
 
 | Resource | Free Tier Limit | Estimated Usage | Headroom |
 |----------|----------------|-----------------|----------|
-| BigQuery Storage | 10 GB/month | ~140 MB/month | 98.6% free |
-| BigQuery Queries | 1 TB/month | ~3 GB/month | 99.7% free |
-| Reddit API | 60 req/min | ~18 req/run (72/day) | Well within limits |
+| BigQuery Storage | 10 GB/month | ~50 MB/month | 99.5% free |
+| BigQuery Queries | 1 TB/month | ~2 GB/month | 99.8% free |
 
 ## Configuration
 
 All pipeline settings are centralized in `src/utils/config.py`:
 
 ```python
-SUBREDDIT_CONFIG = {
-    "technology": ["technology", "programming", "artificial"],
-    "finance": ["wallstreetbets", "stocks", "CryptoCurrency"],
-    "gaming": ["gaming", "pcgaming", "Games"],
+# Data source URLs
+YC_JOBS_URL = "https://www.workatastartup.com/jobs"
+WELLFOUND_JOBS_URL = "https://wellfound.com/jobs"
+HN_API_BASE = "https://hacker-news.firebaseio.com/v0"
+
+# Scraping settings
+SCRAPE_MAX_PAGES = 10       # Max pagination depth per source
+SCRAPE_DELAY_SECONDS = 2    # Polite delay between page loads
+
+# Skill taxonomy (60+ skills across 4 categories)
+SKILL_TAXONOMY = {
+    "languages": ["python", "javascript", "typescript", "go", "rust", ...],
+    "frameworks": ["react", "next.js", "django", "fastapi", ...],
+    "infra_and_cloud": ["aws", "docker", "kubernetes", "terraform", ...],
+    "data_and_ml": ["pytorch", "spark", "airflow", "bigquery", "llm", ...],
 }
-
-POSTS_PER_LISTING = 50      # Posts per listing type (hot/top)
-TOP_TIME_FILTER = "day"     # Time filter for top posts
-API_SLEEP_SECONDS = 1       # Delay between API calls
-
-# NLP settings
-TFIDF_MAX_FEATURES = 200
-TFIDF_NGRAM_RANGE = (1, 2)  # Unigrams and bigrams
-TFIDF_MIN_DF = 2            # Min document frequency
-TFIDF_MAX_DF = 0.85         # Max document frequency
-MAX_KEYWORDS_PER_SUBREDDIT = 30
 ```
-
-To add a new subreddit, simply add it to the appropriate category list in `SUBREDDIT_CONFIG`.
 
 ## How It Works
 
-### Keyword Extraction
+### Skill Extraction
 
-The system uses TF-IDF (Term Frequency-Inverse Document Frequency) to identify trending topics without any paid AI APIs:
+The system identifies trending tech skills using two complementary approaches:
 
-1. Post titles and body text are cleaned: lowercased, URLs stripped, stop words removed, lemmatized
-2. A `TfidfVectorizer` fits on all documents within each subreddit, producing unigrams and bigrams
-3. Keywords are ranked by average TF-IDF score — this naturally surfaces terms that are frequent within a subreddit but distinctive (not appearing in every post)
-4. Each keyword is enriched with engagement metrics: average post score and comment count of posts containing that keyword
+1. **Taxonomy Matching**: A curated list of 60+ skills is matched against cleaned job descriptions using word-boundary regex. This catches known skills reliably.
+2. **TF-IDF Scoring**: A `TfidfVectorizer` fits across all descriptions to surface emerging terms that aren't in the taxonomy yet. Skills are ranked by frequency and enriched with average salary data for posts mentioning that skill.
+
+### Salary Extraction
+
+Job postings express salaries in many formats ($150K, $150,000, $150k-$200k). The scrapers use regex patterns to normalize these into `salary_min` and `salary_max` integers, enabling salary analysis by skill, role, and source.
 
 ### Deduplication
 
-Posts are deduplicated at two levels:
-- **Within each run**: A post appearing in both `hot` and `top` listings is kept once with `listing_type="hot+top"`
-- **Across runs**: Before loading to BigQuery, existing `post_id` values from the last 24 hours are queried and filtered out
+Jobs are deduplicated at two levels:
+- **Within each run**: Same job appearing in multiple scrape pages is kept once via content hashing
+- **Across runs**: Before loading to BigQuery, existing `job_id` values from the last 24 hours are queried and filtered out
 
 ### Error Resilience
 
-- Reddit API failures for individual subreddits are caught and logged — the pipeline continues with remaining subreddits
+- Individual scraper failures don't block the pipeline — if Wellfound is down, YC and HN data still flows
 - Airflow retries each task up to 2 times with exponential backoff
 - BigQuery load retries on `ServiceUnavailable` errors
 - Missing BigQuery tables are auto-created on first load attempt
