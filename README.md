@@ -4,6 +4,64 @@ An automated data pipeline that scrapes software engineering job postings from Y
 
 Built with Apache Airflow, Google BigQuery, and Streamlit.
 
+## Platform Preview
+
+Below are some snapshots of the pipeline and analytics dashboard in action.
+
+---
+
+## Airflow Orchestration
+
+The pipeline is orchestrated with **Apache Airflow**, which schedules the job scrapers, runs the ETL tasks, and loads results into BigQuery.
+
+| DAG View | Task Execution Dashboard |
+|----------|-------------------------|
+| ![](docs/images/airflowDAG.png) | ![](docs/images/airflowDAGdashboard.png) |
+
+The DAG coordinates parallel scrapers for YC, Greenhouse, Ashby, and Hacker News before running the transformation and loading steps.
+
+---
+
+## BigQuery Data Warehouse
+
+All collected jobs are stored in **Google BigQuery**, where the pipeline maintains structured tables for raw jobs, skill trends, and market metrics.
+
+![](docs/images/GCPBigQuaeryRAWJOBS.png)
+
+This allows the dashboard to query thousands of job postings instantly and compute metrics like salary distributions, remote job percentages, and skill demand.
+
+---
+
+## Streamlit Analytics Dashboard
+
+The **Streamlit dashboard** provides interactive insights into the software engineering job market.
+
+### Most In-Demand Skills
+
+![](docs/images/streamlitpopularskills.png)
+
+Shows which technologies appear most frequently across scraped job postings.
+
+---
+
+### Skills vs Salary
+
+![](docs/images/streamlitskillsbysalary.png)
+
+Highlights skills associated with the highest average salary ranges across postings.
+
+---
+
+### Remote Job Distribution
+
+![](docs/images/streamlitremotejobs.png)
+
+Displays how frequently remote work appears across the different job sources.
+
+---
+
+> End-to-end pipeline: **Scrape → Process → Analyze → Visualize**
+
 ## Architecture
 
 ```
