@@ -1,0 +1,41 @@
+name: ETL Pipeline
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install playwright requests beautifulsoup4 \
+            'google-cloud-bigquery[pandas,pyarrow]' pandas nltk \
+            scikit-learn db-dtypes
+          playwright install --with-deps chromium
+
+      - name: Set up GCP credentials
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: echo "$GCP_SA_KEY" > /tmp/sa-key.json
+
+      - name: Run pipeline
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa-key.json
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          BQ_DATASET: ${{ secrets.BQ_DATASET }}
+        run: python scripts/run_pipeline.py
+
+      - name: Cleanup credentials
+        if: always()
+        run: rm -f /tmp/sa-key.json

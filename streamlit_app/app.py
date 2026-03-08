@@ -40,13 +40,16 @@ def load_market_metrics():
 
 
 @st.cache_data(ttl=300)
-def load_recent_jobs(limit=200):
+def load_recent_jobs():
     return query_df(f"""
         SELECT job_id, source, company, title, salary_min, salary_max,
-               location, remote, company_stage, yc_batch, url, collected_at
+               location, remote, company_stage, yc_batch, url,
+               MAX(collected_at) AS collected_at
         FROM `{DATASET}.raw_jobs`
+        WHERE collected_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+        GROUP BY job_id, source, company, title, salary_min, salary_max,
+                 location, remote, company_stage, yc_batch, url
         ORDER BY collected_at DESC
-        LIMIT {limit}
     """)
 
 
@@ -66,7 +69,7 @@ if page == "Overview":
     try:
         metrics_df = load_market_metrics()
         skills_df = load_skill_trends()
-        jobs_df = load_recent_jobs(limit=50)
+        jobs_df = load_recent_jobs()
     except Exception as e:
         st.error(f"Could not load data from BigQuery: {e}")
         st.info("Make sure the ETL pipeline has run at least once.")

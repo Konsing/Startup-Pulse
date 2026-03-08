@@ -190,6 +190,8 @@ The Streamlit dashboard (port 8501) has four views:
 
 ```
 startup-pulse/
+├── .github/workflows/
+│   └── pipeline.yml            # GitHub Actions: daily ETL cron + manual trigger
 ├── docker-compose.yml          # 5 services: postgres, airflow-init, webserver, scheduler, streamlit
 ├── Makefile                    # make up/down/restart/logs/build/init-bq
 ├── .env.example                # Template for environment variables
@@ -224,7 +226,8 @@ startup-pulse/
 │       └── bq_client.py        # Cached BigQuery client
 │
 ├── scripts/
-│   └── init_bigquery.py        # One-time dataset and table creation
+│   ├── init_bigquery.py        # One-time dataset and table creation
+│   └── run_pipeline.py         # Standalone ETL runner (GitHub Actions / local)
 │
 ├── tests/
 │   ├── test_hn_scraper.py
@@ -261,6 +264,15 @@ make init-bq
 ```
 
 See [SETUP_GUIDE.md](SETUP_GUIDE.md) for detailed step-by-step instructions including GCP setup.
+
+## Deployment Options
+
+| Mode | ETL Runner | Dashboard | Best For |
+|------|-----------|-----------|----------|
+| **Local** | Docker Compose + Airflow | `localhost:8501` | Development and debugging |
+| **Cloud (Free)** | GitHub Actions (daily cron) | Streamlit Community Cloud | Zero-maintenance, shareable URL |
+
+Both modes use the same BigQuery data warehouse and Python code. See [SETUP_GUIDE.md](SETUP_GUIDE.md) Sections 12-13 for cloud setup and switching instructions.
 
 ## Free-Tier Budget
 

@@ -15,6 +15,8 @@ This guide walks you through every step needed to get the Startup Pulse platform
 9. [Troubleshooting](#9-troubleshooting)
 10. [Maintenance and Operations](#10-maintenance-and-operations)
 11. [Quick Start (Returning Users)](#11-quick-start-returning-users)
+12. [Cloud Deployment (Free Tier)](#12-cloud-deployment-free-tier)
+13. [Switching Between Local and Cloud](#13-switching-between-local-and-cloud)
 
 ---
 
@@ -659,3 +661,156 @@ To stop everything when you're done:
 ```bash
 make down
 ```
+
+---
+
+## 12. Cloud Deployment (Free Tier)
+
+You can run the entire platform for free using GitHub Actions (ETL pipeline) and Streamlit Community Cloud (dashboard). Both use the same BigQuery data warehouse and the same Python code — no Docker or Airflow required.
+
+### Free Tier Budget
+
+| Service | Free Tier | Our Usage |
+|---------|-----------|-----------|
+| GitHub Actions | 2,000 min/month | ~150 min/month (5 min/day) |
+| Streamlit Community Cloud | Unlimited for public apps | 1 app |
+| BigQuery | 10 GB storage, 1 TB queries/month | ~50 MB, ~2 GB |
+
+### Step 12.1: Add GitHub Secrets
+
+The GitHub Actions workflow needs three secrets to authenticate with GCP.
+
+1. Go to your repository on GitHub
+2. Navigate to **Settings > Secrets and variables > Actions**
+3. Click **"New repository secret"** and add these three secrets:
+
+| Secret Name | Value |
+|-------------|-------|
+| `GCP_SA_KEY` | The entire contents of your `credentials/service-account.json` file (paste the full JSON) |
+| `GCP_PROJECT_ID` | Your GCP project ID (e.g., `startup-pulse-123456`) |
+| `BQ_DATASET` | `startup_pulse` |
+
+To get the JSON contents:
+```bash
+cat credentials/service-account.json
+# Copy the entire output
+```
+
+### Step 12.2: Test the GitHub Actions Pipeline
+
+1. Go to your repository on GitHub
+2. Click the **"Actions"** tab
+3. Select the **"ETL Pipeline"** workflow on the left
+4. Click **"Run workflow"** > **"Run workflow"** (the green button)
+5. Watch the run — it should take 5-8 minutes
+6. Check the logs to verify all 4 scrapers ran and data was loaded to BigQuery
+
+The workflow also runs automatically every day at 08:00 UTC via the cron schedule.
+
+### Step 12.3: Deploy Streamlit Dashboard
+
+1. Go to https://share.streamlit.io/ and sign in with your GitHub account
+2. Click **"New app"**
+3. Fill in:
+   - **Repository**: `Konsing/Startup-Pulse`
+   - **Branch**: `main`
+   - **Main file path**: `streamlit_app/app.py`
+4. Click **"Advanced settings"** and paste your secrets in TOML format:
+
+```toml
+GCP_PROJECT_ID = "startup-pulse-123456"
+BQ_DATASET = "startup_pulse"
+
+[gcp_service_account]
+type = "service_account"
+project_id = "startup-pulse-123456"
+private_key_id = "your-key-id"
+private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+client_email = "startup-pulse-etl@startup-pulse-123456.iam.gserviceaccount.com"
+client_id = "123456789"
+auth_uri = "https://accounts.google.com/o/oauth2/auth"
+token_uri = "https://oauth2.googleapis.com/token"
+auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/..."
+```
+
+The `[gcp_service_account]` section is your `service-account.json` file converted to TOML. Each JSON key becomes a TOML key. The `private_key` value must be a single-line string with `\n` for newlines.
+
+5. Click **"Deploy!"**
+
+The dashboard will be live at `https://<your-app-name>.streamlit.app` and automatically redeploys when you push to `main`.
+
+### Step 12.4: Verify Everything Works
+
+1. Trigger a manual GitHub Actions run (Step 12.2)
+2. Wait for it to complete successfully
+3. Open your Streamlit Cloud dashboard
+4. Verify all 4 sources appear (YC, Greenhouse, Ashby, HN) with data
+
+---
+
+## 13. Switching Between Local and Cloud
+
+Both local (Docker Compose + Airflow) and cloud (GitHub Actions + Streamlit Cloud) modes use the **same BigQuery tables** and **same Python code**. You can switch freely.
+
+### Running Locally (Docker Compose + Airflow)
+
+This is the setup from Sections 1-11. Use this when you want to:
+- Develop and test scraper changes interactively
+- Debug pipeline issues with Airflow's UI and task logs
+- Run the dashboard locally with hot-reload
+
+```bash
+# Start local environment
+make up
+
+# Access Airflow UI at http://localhost:8080 (admin/admin)
+# Access Streamlit at http://localhost:8501
+
+# Trigger a pipeline run
+docker compose exec airflow-webserver airflow dags trigger startup_pulse_pipeline
+
+# Stop when done
+make down
+```
+
+**Important**: If you're also running the cloud pipeline, pause the Airflow DAG (toggle it off in the UI) to avoid duplicate runs.
+
+### Running in the Cloud (GitHub Actions + Streamlit Cloud)
+
+This is the setup from Section 12. Use this when you want:
+- Zero-maintenance daily pipeline runs
+- A public dashboard URL you can share
+- No Docker or local resources needed
+
+The pipeline runs automatically at 08:00 UTC daily. To trigger manually:
+1. Go to GitHub > Actions > ETL Pipeline > Run workflow
+
+**Important**: If you're also running locally, disable the GitHub Actions cron by commenting out the schedule in `.github/workflows/pipeline.yml`:
+```yaml
+on:
+  # schedule:
+  #   - cron: '0 8 * * *'
+  workflow_dispatch:
+```
+
+### Running the Pipeline Without Docker (Local, No Airflow)
+
+You can also run the pipeline locally without Docker or Airflow using the standalone runner:
+
+```bash
+# Install dependencies (one-time)
+pip install playwright requests beautifulsoup4 \
+  'google-cloud-bigquery[pandas,pyarrow]' pandas nltk scikit-learn db-dtypes
+playwright install chromium
+
+# Set environment variables
+export GOOGLE_APPLICATION_CREDENTIALS=credentials/service-account.json
+export GCP_PROJECT_ID=startup-pulse-123456
+export BQ_DATASET=startup_pulse
+
+# Run the full pipeline
+python scripts/run_pipeline.py
+```
+
+This uses the same scraper, transform, and load code as Airflow and GitHub Actions.

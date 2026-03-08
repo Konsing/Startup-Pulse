@@ -38,7 +38,7 @@ def deduplicate_in_run(jobs: list[dict]) -> list[dict]:
 
 
 def get_existing_job_ids(client: bigquery.Client, table_ref: str) -> set:
-    """Query BigQuery for job_ids from the last 24 hours.
+    """Query BigQuery for job_ids from the last 7 days.
 
     Args:
         client: An authenticated ``bigquery.Client``.
@@ -52,12 +52,12 @@ def get_existing_job_ids(client: bigquery.Client, table_ref: str) -> set:
     query = f"""
         SELECT DISTINCT job_id
         FROM `{table_ref}`
-        WHERE collected_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+        WHERE collected_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
     """
     try:
         result = client.query(query).result()
         job_ids = {row.job_id for row in result}
-        logger.info("Found %d existing job_ids in last 24h from %s.", len(job_ids), table_ref)
+        logger.info("Found %d existing job_ids in last 7d from %s.", len(job_ids), table_ref)
         return job_ids
     except Exception as exc:
         logger.warning(
