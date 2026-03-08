@@ -2,7 +2,7 @@
 
 An automated data pipeline that scrapes software engineering job postings from YC, Greenhouse, Ashby, and Hacker News, extracts trending skills using NLP, and visualizes market signals through an interactive dashboard.
 
-Built with Apache Airflow, Google BigQuery, and Streamlit.
+Built with GitHub Actions, Google BigQuery, and Streamlit. Also supports local development with Apache Airflow and Docker Compose.
 
 ## Platform Preview
 
@@ -10,15 +10,15 @@ Below are some snapshots of the pipeline and analytics dashboard in action.
 
 ---
 
-## Airflow Orchestration
+## Pipeline Orchestration
 
-The pipeline is orchestrated with **Apache Airflow**, which schedules the job scrapers, runs the ETL tasks, and loads results into BigQuery.
+The ETL pipeline runs daily via **GitHub Actions** (cloud) or **Apache Airflow** (local development), scraping all 4 job sources and loading results into BigQuery.
 
-| DAG View | Task Execution Dashboard |
+| Airflow DAG View | Task Execution Dashboard |
 |----------|-------------------------|
 | ![](docs/images/airflowDAG.png) | ![](docs/images/airflowDAGdashboard.png) |
 
-The DAG coordinates parallel scrapers for YC, Greenhouse, Ashby, and Hacker News before running the transformation and loading steps.
+In production, GitHub Actions runs the pipeline on a daily cron schedule with manual trigger support. For local development, Apache Airflow provides a UI for monitoring and debugging.
 
 ---
 
@@ -70,8 +70,8 @@ Job Board Scrapers
        |
        v
 +------------------+
-|   Apache Airflow |     Daily at 08:00 UTC
-|   (Scheduler)    |
+| GitHub Actions / |     Daily at 08:00 UTC
+| Apache Airflow   |
 +--------+---------+
          |
          v
@@ -119,17 +119,17 @@ The pipeline scrapes all four sources daily, yielding ~3,500 unique software job
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
-| Orchestration | Apache Airflow 2.11.0 | Schedule and monitor ETL pipeline |
+| CI/CD & Scheduling | GitHub Actions | Daily cron pipeline + manual triggers |
+| Orchestration (Local) | Apache Airflow 2.11.0 | Local development DAG with task UI |
 | Data Warehouse | Google BigQuery | Store and query structured data |
-| Visualization | Streamlit | Interactive analytics dashboard |
+| Visualization | Streamlit (Community Cloud) | Interactive analytics dashboard |
 | Scraping | Playwright + Greenhouse/Ashby APIs | Headless browser for JS pages, REST APIs for Greenhouse and Ashby |
 | NLP | NLTK + scikit-learn TF-IDF | Text cleaning and skill extraction |
-| Infrastructure | Docker Compose | Container orchestration |
-| Database | PostgreSQL 15 | Airflow metadata storage |
+| Infrastructure (Local) | Docker Compose + PostgreSQL 15 | Local container orchestration |
 
 ## ETL Pipeline
 
-The Airflow DAG (`startup_pulse_pipeline`) runs daily at 08:00 UTC and executes 8 tasks:
+The pipeline runs daily at 08:00 UTC via GitHub Actions (or locally via Airflow) and executes 8 tasks:
 
 ```
 scrape_yc ----------\
@@ -154,7 +154,7 @@ Two parallel processing steps after text cleaning:
 2. **Market Metrics** (numpy): Computes per-source statistics — average salary, median salary, remote percentage, top role categories.
 
 ### Load
-- Deduplicates within each run and across runs (queries existing job_ids from last 24 hours)
+- Deduplicates within each run and across runs (queries existing job_ids from last 7 days)
 - Validates data (null checks, text truncation, type enforcement)
 - Appends to BigQuery tables with retry logic on transient errors
 
@@ -243,27 +243,24 @@ startup-pulse/
 
 ## Quick Start
 
+### Cloud (Recommended)
+
+1. Set up a GCP project with BigQuery enabled and a service account key ([details](SETUP_GUIDE.md#2-google-cloud-platform-setup))
+2. Add GitHub secrets: `GCP_SA_KEY`, `GCP_PROJECT_ID`, `BQ_DATASET` ([details](SETUP_GUIDE.md#step-121-add-github-secrets))
+3. Go to **Actions > ETL Pipeline > Run workflow** to trigger the pipeline
+4. Deploy the dashboard on [Streamlit Community Cloud](https://share.streamlit.io/) ([details](SETUP_GUIDE.md#step-123-deploy-streamlit-dashboard))
+
+### Local Development
+
 ```bash
-# 1. Clone and configure
-cp .env.example .env
-# Edit .env with your GCP credentials
-
-# 2. Place GCP service account key
-cp /path/to/your/service-account.json credentials/service-account.json
-
-# 3. Build and start
-make build
-make up
-
-# 4. Initialize BigQuery tables
-make init-bq
-
-# 5. Access the services
-# Airflow UI: http://localhost:8080 (admin/admin)
-# Streamlit:  http://localhost:8501
+cp .env.example .env                    # Configure GCP credentials
+cp /path/to/key.json credentials/service-account.json
+make build && make up                   # Start Docker Compose (Airflow + Streamlit)
+make init-bq                            # Create BigQuery tables
+# Airflow UI: http://localhost:8080     Streamlit: http://localhost:8501
 ```
 
-See [SETUP_GUIDE.md](SETUP_GUIDE.md) for detailed step-by-step instructions including GCP setup.
+See [SETUP_GUIDE.md](SETUP_GUIDE.md) for detailed step-by-step instructions.
 
 ## Deployment Options
 
@@ -278,6 +275,8 @@ Both modes use the same BigQuery data warehouse and Python code. See [SETUP_GUID
 
 | Resource | Free Tier Limit | Estimated Usage | Headroom |
 |----------|----------------|-----------------|----------|
+| GitHub Actions | 2,000 min/month | ~150 min/month | 92% free |
+| Streamlit Cloud | Unlimited (public apps) | 1 app | -- |
 | BigQuery Storage | 10 GB/month | ~50 MB/month | 99.5% free |
 | BigQuery Queries | 1 TB/month | ~2 GB/month | 99.8% free |
 
@@ -328,11 +327,11 @@ Job postings express salaries in many formats ($150K, $150,000, $150k-$200k). Th
 
 Jobs are deduplicated at two levels:
 - **Within each run**: Same job appearing in multiple scrape pages is kept once via content hashing
-- **Across runs**: Before loading to BigQuery, existing `job_id` values from the last 24 hours are queried and filtered out
+- **Across runs**: Before loading to BigQuery, existing `job_id` values from the last 7 days are queried and filtered out
 
 ### Error Resilience
 
 - Individual scraper failures don't block the pipeline — if one source is down, others still flow
-- Airflow retries each task up to 2 times with exponential backoff
-- BigQuery load retries on `ServiceUnavailable` errors
+- BigQuery load retries on `ServiceUnavailable` errors with exponential backoff
 - Missing BigQuery tables are auto-created on first load attempt
+- GitHub Actions provides run logs and failure notifications
