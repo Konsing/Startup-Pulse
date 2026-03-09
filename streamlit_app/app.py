@@ -19,10 +19,15 @@ DATASET = get_dataset()
 @st.cache_data(ttl=300)
 def load_skill_trends():
     return query_df(f"""
-        SELECT skill, category, frequency, tfidf_score,
-               avg_salary, num_jobs, collected_at
+        SELECT skill, category,
+               MAX(frequency) AS frequency,
+               MAX(tfidf_score) AS tfidf_score,
+               MAX(avg_salary) AS avg_salary,
+               MAX(num_jobs) AS num_jobs,
+               MAX(collected_at) AS collected_at
         FROM `{DATASET}.skill_trends`
         WHERE collected_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+        GROUP BY skill, category
         ORDER BY frequency DESC
     """)
 
@@ -82,8 +87,8 @@ if page == "Overview":
     # KPI cards
     latest = metrics_df.sort_values("collected_at", ascending=False).drop_duplicates("source")
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Jobs", int(latest["total_jobs"].sum()))
-    col2.metric("Sources", len(latest))
+    col1.metric("Total Jobs", len(jobs_df))
+    col2.metric("Sources", len(jobs_df["source"].unique()) if not jobs_df.empty else 0)
     col3.metric("Unique Skills", len(skills_df["skill"].unique()) if not skills_df.empty else 0)
     col4.metric("Avg Remote %", f"{latest['remote_pct'].mean():.0f}%")
 
