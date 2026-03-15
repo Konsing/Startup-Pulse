@@ -72,7 +72,6 @@ if page == "Overview":
     st.title("Startup Pulse Overview")
 
     try:
-        metrics_df = load_market_metrics()
         skills_df = load_skill_trends()
         jobs_df = load_recent_jobs()
     except Exception as e:
@@ -80,17 +79,30 @@ if page == "Overview":
         st.info("Make sure the ETL pipeline has run at least once.")
         st.stop()
 
-    if metrics_df.empty:
+    if jobs_df.empty:
         st.warning("No data available yet. Run the ETL pipeline first.")
         st.stop()
 
+    # Compute per-source stats from actual job data (single source of truth)
+    source_stats = jobs_df.groupby("source").agg(
+        total_jobs=("job_id", "count"),
+        remote_pct=("remote", lambda x: round(x.sum() / len(x) * 100) if len(x) > 0 else 0),
+    ).reset_index()
+    salary_jobs = jobs_df.dropna(subset=["salary_min", "salary_max"])
+    if not salary_jobs.empty:
+        salary_avg = salary_jobs.groupby("source").apply(
+            lambda x: int(((x["salary_min"] + x["salary_max"]) / 2).mean())
+        ).reset_index(name="avg_salary")
+        source_stats = source_stats.merge(salary_avg, on="source", how="left")
+    else:
+        source_stats["avg_salary"] = None
+
     # KPI cards
-    latest = metrics_df.sort_values("collected_at", ascending=False).drop_duplicates("source")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total Jobs", len(jobs_df))
-    col2.metric("Sources", len(jobs_df["source"].unique()) if not jobs_df.empty else 0)
+    col2.metric("Sources", len(source_stats))
     col3.metric("Unique Skills", len(skills_df["skill"].unique()) if not skills_df.empty else 0)
-    col4.metric("Avg Remote %", f"{latest['remote_pct'].mean():.0f}%")
+    col4.metric("Avg Remote %", f"{source_stats['remote_pct'].mean():.0f}%")
 
     st.divider()
 
@@ -109,12 +121,11 @@ if page == "Overview":
 
     with right:
         st.subheader("Sources Overview")
-        if not latest.empty:
-            st.dataframe(
-                latest[["source", "total_jobs", "avg_salary", "remote_pct"]],
-                use_container_width=True,
-                hide_index=True,
-            )
+        st.dataframe(
+            source_stats[["source", "total_jobs", "avg_salary", "remote_pct"]],
+            use_container_width=True,
+            hide_index=True,
+        )
 
     # Recent jobs preview
     if not jobs_df.empty:
@@ -191,23 +202,26 @@ elif page == "Market Metrics":
     st.title("Market Metrics")
 
     try:
-        metrics_df = load_market_metrics()
         jobs_df = load_recent_jobs()
     except Exception as e:
         st.error(f"Could not load metrics: {e}")
         st.stop()
 
-    if metrics_df.empty:
+    if jobs_df.empty:
         st.warning("No metrics available.")
         st.stop()
 
     import plotly.express as px
 
-    latest = metrics_df.sort_values("collected_at", ascending=False).drop_duplicates("source")
+    # Compute per-source stats from actual job data
+    source_stats = jobs_df.groupby("source").agg(
+        total_jobs=("job_id", "count"),
+        remote_pct=("remote", lambda x: round(x.sum() / len(x) * 100) if len(x) > 0 else 0),
+    ).reset_index()
 
     # Jobs by source
     fig_source = px.bar(
-        latest,
+        source_stats,
         x="source",
         y="total_jobs",
         color="source",
@@ -218,7 +232,7 @@ elif page == "Market Metrics":
 
     # Remote percentage by source
     fig_remote = px.bar(
-        latest,
+        source_stats,
         x="source",
         y="remote_pct",
         color="source",
@@ -260,7 +274,7 @@ elif page == "Market Metrics":
 
     # Full metrics table
     st.subheader("All Market Metrics")
-    st.dataframe(latest, use_container_width=True, hide_index=True)
+    st.dataframe(source_stats, use_container_width=True, hide_index=True)
 
 # ── Job Explorer page ────────────────────────────────────────────────
 
