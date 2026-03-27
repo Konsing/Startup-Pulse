@@ -338,7 +338,23 @@ elif page == "Market Metrics":
     fig_remote.update_layout(**CHART_THEME)
     st.plotly_chart(fig_remote, use_container_width=True)
 
-    # Salary distributions (if job data available)
+    # Salary by source from market_metrics (always fresh)
+    if not metrics_df.empty:
+        latest_metrics = metrics_df.sort_values("collected_at").groupby("source").last().reset_index()
+        salary_metrics = latest_metrics.dropna(subset=["avg_salary"])
+        if not salary_metrics.empty:
+            fig_salary_bar = px.bar(
+                salary_metrics,
+                x="source",
+                y=["avg_salary", "median_salary"],
+                barmode="group",
+                title="Salary by Source (Avg & Median)",
+                labels={"value": "Salary ($)", "variable": "Metric"},
+            )
+            fig_salary_bar.update_layout(**CHART_THEME)
+            st.plotly_chart(fig_salary_bar, use_container_width=True)
+
+    # Salary distribution box plot from per-job data (when available)
     if not jobs_df.empty:
         salary_jobs = jobs_df.dropna(subset=["salary_min", "salary_max"])
         if not salary_jobs.empty:
