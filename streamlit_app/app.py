@@ -164,6 +164,7 @@ if page == "Overview":
     try:
         skills_df = load_skill_trends()
         jobs_df = load_recent_jobs()
+        metrics_df = load_market_metrics()
     except Exception as e:
         st.error(f"Could not load data from BigQuery: {e}")
         st.info("Make sure the ETL pipeline has run at least once.")
@@ -177,17 +178,21 @@ if page == "Overview":
         latest_ts = jobs_df["collected_at"].max()
         st.caption(f"Last refreshed: {latest_ts:%Y-%m-%d %H:%M} UTC")
 
-    # Compute per-source stats from actual job data (single source of truth)
+    # Build per-source stats: job counts from raw_jobs, salary from market_metrics
     source_stats = jobs_df.groupby("source").agg(
         total_jobs=("job_id", "count"),
         remote_pct=("remote", lambda x: round(x.sum() / len(x) * 100) if len(x) > 0 else 0),
     ).reset_index()
-    salary_jobs = jobs_df.dropna(subset=["salary_min", "salary_max"])
-    if not salary_jobs.empty:
-        salary_avg = salary_jobs.groupby("source").apply(
-            lambda x: int(((x["salary_min"] + x["salary_max"]) / 2).mean())
-        ).reset_index(name="avg_salary")
-        source_stats = source_stats.merge(salary_avg, on="source", how="left")
+
+    # Use market_metrics for avg_salary (computed fresh each pipeline run,
+    # not affected by cross-run deduplication in raw_jobs)
+    if not metrics_df.empty:
+        latest_metrics = metrics_df.sort_values("collected_at").groupby("source").last().reset_index()
+        source_stats = source_stats.merge(
+            latest_metrics[["source", "avg_salary"]],
+            on="source",
+            how="left",
+        )
     else:
         source_stats["avg_salary"] = None
 
@@ -294,6 +299,7 @@ elif page == "Market Metrics":
 
     try:
         jobs_df = load_recent_jobs()
+        metrics_df = load_market_metrics()
     except Exception as e:
         st.error(f"Could not load metrics: {e}")
         st.stop()
@@ -302,7 +308,7 @@ elif page == "Market Metrics":
         st.warning("No metrics available.")
         st.stop()
 
-    # Compute per-source stats from actual job data
+    # Compute per-source stats: counts from raw_jobs, salary from market_metrics
     source_stats = jobs_df.groupby("source").agg(
         total_jobs=("job_id", "count"),
         remote_pct=("remote", lambda x: round(x.sum() / len(x) * 100) if len(x) > 0 else 0),
@@ -366,9 +372,18 @@ elif page == "Market Metrics":
             fig_stage.update_layout(**CHART_THEME)
             st.plotly_chart(fig_stage, use_container_width=True)
 
-    # Full metrics table
+    # Full metrics table from market_metrics (includes fresh avg_salary)
     st.subheader("All Market Metrics")
-    st.dataframe(source_stats, use_container_width=True, hide_index=True)
+    if not metrics_df.empty:
+        latest_metrics = metrics_df.sort_values("collected_at").groupby("source").last().reset_index()
+        display_metrics = source_stats.merge(
+            latest_metrics[["source", "avg_salary", "median_salary"]],
+            on="source",
+            how="left",
+        )
+        st.dataframe(display_metrics, use_container_width=True, hide_index=True)
+    else:
+        st.dataframe(source_stats, use_container_width=True, hide_index=True)
 
 # ── Job Explorer page ────────────────────────────────────────────────
 
