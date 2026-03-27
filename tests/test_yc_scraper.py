@@ -36,3 +36,19 @@ class TestYCScraper:
         job = scraper._normalize(SAMPLE_RAW_JOB)
         assert job["salary_min"] == 150000
         assert job["salary_max"] == 200000
+
+    def test_normalize_job_no_salary(self):
+        raw = {**SAMPLE_RAW_JOB, "salary": ""}
+        scraper = YCScraper()
+        job = scraper._normalize(raw)
+        assert job["salary_min"] is None
+        assert job["salary_max"] is None
+
+    def test_parse_salary_json_ld_format(self):
+        assert YCScraper._parse_salary("$150000 - $200000") == (150000, 200000)
+
+    def test_parse_salary_k_format(self):
+        assert YCScraper._parse_salary("$150K - $200K") == (150000, 200000)
+
+    def test_fetch_salary_from_page_empty_url(self):
+        assert YCScraper._fetch_salary_from_page("") == ""

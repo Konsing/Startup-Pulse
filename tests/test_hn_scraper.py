@@ -45,7 +45,30 @@ class TestHNScraper:
         job = scraper._parse_comment(SAMPLE_COMMENT)
         assert job["source"] == "hackernews"
 
+    def test_parse_hn_comment_extracts_salary(self):
+        scraper = HNScraper()
+        job = scraper._parse_comment(SAMPLE_COMMENT)
+        assert job["salary_min"] == 180000
+        assert job["salary_max"] == 220000
+        assert job["currency"] == "USD"
+
+    def test_parse_hn_comment_no_salary(self):
+        scraper = HNScraper()
+        comment = {**SAMPLE_COMMENT, "text": "Acme Corp | Engineer | SF, CA | REMOTE<p>We build stuff."}
+        job = scraper._parse_comment(comment)
+        assert job["salary_min"] is None
+        assert job["salary_max"] is None
+
     def test_parse_hn_comment_returns_none_for_non_job(self):
         scraper = HNScraper()
         non_job = {"id": 1, "text": "Is anyone else having trouble with the thread?", "type": "comment", "by": "user", "parent": 99000, "time": 1709251200}
         assert scraper._parse_comment(non_job) is None
+
+    def test_extract_salary_range_k_format(self):
+        assert HNScraper._extract_salary_range("$150k-$200k") == (150000, 200000)
+
+    def test_extract_salary_range_full_format(self):
+        assert HNScraper._extract_salary_range("$150,000 - $200,000") == (150000, 200000)
+
+    def test_extract_salary_range_no_match(self):
+        assert HNScraper._extract_salary_range("great pay") == (None, None)

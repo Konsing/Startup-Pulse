@@ -131,6 +131,9 @@ class HNScraper:
         # Detect remote
         remote = bool(re.search(r"\bremote\b", location_str, re.IGNORECASE))
 
+        # Extract salary from header parts or body text
+        salary_min, salary_max = self._parse_salary(parts, plain)
+
         # Build unique job_id from comment id
         job_id = f"hn_{comment['id']}"
 
@@ -140,9 +143,9 @@ class HNScraper:
             "company": company,
             "title": title,
             "description": plain,
-            "salary_min": None,
-            "salary_max": None,
-            "currency": None,
+            "salary_min": salary_min,
+            "salary_max": salary_max,
+            "currency": "USD" if salary_min else None,
             "location": location_str,
             "remote": remote,
             "company_stage": None,
@@ -151,3 +154,49 @@ class HNScraper:
             "url": f"https://news.ycombinator.com/item?id={comment['id']}",
             "collected_at": datetime.now(timezone.utc).isoformat(),
         }
+
+    @staticmethod
+    def _parse_salary(parts: list[str], full_text: str) -> tuple[int | None, int | None]:
+        """Extract salary from pipe-separated header parts or body text.
+
+        HN comments use formats like:
+          $150k-$200k | $150K - $200K | $150,000 - $200,000
+        """
+        # Check pipe parts first (most structured), then fall back to body
+        sources = parts + [full_text]
+        for source in sources:
+            result = HNScraper._extract_salary_range(source)
+            if result != (None, None):
+                return result
+        return None, None
+
+    @staticmethod
+    def _extract_salary_range(text: str) -> tuple[int | None, int | None]:
+        """Parse a salary range from a text fragment."""
+        if not text:
+            return None, None
+
+        # Match patterns: $150k-$200k, $150K - $200K, $150,000-$200,000
+        match = re.search(
+            r"\$\s*([\d,]+)\s*[kK]?\s*[-–—/to]+\s*\$\s*([\d,]+)\s*[kK]?",
+            text,
+        )
+        if not match:
+            return None, None
+
+        raw_lo = match.group(1).replace(",", "")
+        raw_hi = match.group(2).replace(",", "")
+        lo = int(raw_lo)
+        hi = int(raw_hi)
+
+        # Handle K suffix
+        if re.search(r"\d\s*[kK]", match.group(0)):
+            if lo < 1_000:
+                lo *= 1_000
+            if hi < 1_000:
+                hi *= 1_000
+
+        if not (10_000 <= lo <= 1_000_000 and 10_000 <= hi <= 1_000_000):
+            return None, None
+
+        return min(lo, hi), max(lo, hi)

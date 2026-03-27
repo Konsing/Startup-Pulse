@@ -18,6 +18,12 @@ SAMPLE_API_JOB = {
     "applyUrl": "https://jobs.ashbyhq.com/linear/abc-123/application",
 }
 
+SAMPLE_JOB_WITH_SALARY = {
+    **SAMPLE_API_JOB,
+    "descriptionPlain": "Build distributed systems. Compensation range: $180,000-$250,000 USD per year.",
+    "descriptionHtml": "<p>Build distributed systems. Compensation range: $180,000-$250,000 USD per year.</p>",
+}
+
 
 class TestAshbyScraper:
     def test_normalize_sets_source(self):
@@ -50,3 +56,28 @@ class TestAshbyScraper:
         scraper = AshbyScraper()
         job = scraper._normalize(SAMPLE_API_JOB, "linear")
         assert "Remote" in job["location"]
+
+    def test_normalize_no_salary_when_absent(self):
+        scraper = AshbyScraper()
+        job = scraper._normalize(SAMPLE_API_JOB, "linear")
+        assert job["salary_min"] is None
+        assert job["salary_max"] is None
+
+    def test_normalize_extracts_salary_from_description(self):
+        scraper = AshbyScraper()
+        job = scraper._normalize(SAMPLE_JOB_WITH_SALARY, "linear")
+        assert job["salary_min"] == 180000
+        assert job["salary_max"] == 250000
+        assert job["currency"] == "USD"
+
+    def test_parse_salary_range_with_dash(self):
+        assert AshbyScraper._parse_salary_from_description("$150,000-$200,000") == (150000, 200000)
+
+    def test_parse_salary_range_with_spaces(self):
+        assert AshbyScraper._parse_salary_from_description("$150,000 - $200,000") == (150000, 200000)
+
+    def test_parse_salary_no_match(self):
+        assert AshbyScraper._parse_salary_from_description("Great benefits!") == (None, None)
+
+    def test_parse_salary_empty(self):
+        assert AshbyScraper._parse_salary_from_description("") == (None, None)

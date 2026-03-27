@@ -81,7 +81,10 @@ class AshbyScraper:
             location = f"{location} (Remote)" if location else "Remote"
 
         description_html = raw.get("descriptionHtml", "")
-        description = self._strip_html(description_html) if description_html else (raw.get("descriptionPlain", ""))
+        description_plain = raw.get("descriptionPlain", "")
+        description = self._strip_html(description_html) if description_html else description_plain
+
+        salary_min, salary_max = self._parse_salary_from_description(description_plain)
 
         job_url = raw.get("jobUrl", "")
 
@@ -94,9 +97,9 @@ class AshbyScraper:
             "company": board_token.replace("-", " ").title(),
             "title": title,
             "description": description,
-            "salary_min": None,
-            "salary_max": None,
-            "currency": None,
+            "salary_min": salary_min,
+            "salary_max": salary_max,
+            "currency": "USD" if salary_min else None,
             "location": location,
             "remote": is_remote or bool(re.search(r"\bremote\b", location, re.IGNORECASE)),
             "company_stage": None,
@@ -113,3 +116,42 @@ class AshbyScraper:
         text = re.sub(r"&[a-zA-Z]+;", " ", text)
         text = re.sub(r"\s+", " ", text).strip()
         return text
+
+    @staticmethod
+    def _parse_salary_from_description(text: str) -> tuple[int | None, int | None]:
+        """Extract salary range from description text.
+
+        Looks for patterns like "$150,000 - $200,000" or "$150K-$200K".
+        """
+        if not text:
+            return None, None
+
+        # Normalize whitespace chars like \xa0
+        text = re.sub(r"[\xa0\u200b]", " ", text)
+
+        # Match "$X - $Y" or "$X-$Y" patterns (with K suffix support)
+        range_match = re.search(
+            r"\$\s*([\d,]+)\s*[kK]?\s*[-–—to]+\s*\$\s*([\d,]+)\s*[kK]?",
+            text,
+        )
+        if not range_match:
+            return None, None
+
+        raw_lo = range_match.group(1).replace(",", "")
+        raw_hi = range_match.group(2).replace(",", "")
+        lo = int(raw_lo)
+        hi = int(raw_hi)
+
+        # Handle K suffix: check if original match included k/K
+        span = range_match.group(0)
+        if re.search(r"\d\s*[kK]", span):
+            if lo < 1_000:
+                lo *= 1_000
+            if hi < 1_000:
+                hi *= 1_000
+
+        # Sanity check: only keep plausible annual salaries
+        if not (10_000 <= lo <= 1_000_000 and 10_000 <= hi <= 1_000_000):
+            return None, None
+
+        return min(lo, hi), max(lo, hi)

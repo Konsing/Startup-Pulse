@@ -14,6 +14,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import requests
+
 from src.utils.config import (
     YC_JOBS_BASE_URL,
     YC_CATEGORY_SLUGS,
@@ -58,6 +60,14 @@ class YCScraper:
                 time.sleep(SCRAPE_DELAY_SECONDS)
 
             browser.close()
+
+        # Fetch salary from individual job pages (JSON-LD)
+        for raw in raw_jobs:
+            url = raw.get("url", "")
+            if url and not url.startswith("http"):
+                url = f"https://www.workatastartup.com{url}"
+            raw["salary"] = self._fetch_salary_from_page(url)
+            time.sleep(0.3)
 
         jobs = [self._normalize(raw) for raw in raw_jobs]
 
@@ -168,6 +178,26 @@ class YCScraper:
             "url": url,
             "collected_at": datetime.now(timezone.utc).isoformat(),
         }
+
+    @staticmethod
+    def _fetch_salary_from_page(url: str) -> str:
+        """Fetch salary range from a YC job page's JSON-LD structured data."""
+        if not url:
+            return ""
+        try:
+            resp = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+            resp.raise_for_status()
+            # Extract minValue/maxValue from JSON-LD
+            match = re.search(
+                r'"minValue"\s*:\s*(\d+).*?"maxValue"\s*:\s*(\d+)',
+                resp.text,
+                re.DOTALL,
+            )
+            if match:
+                return f"${match.group(1)} - ${match.group(2)}"
+        except Exception as exc:
+            logger.debug("Failed to fetch salary from %s: %s", url, exc)
+        return ""
 
     @staticmethod
     def _parse_salary(text: str) -> tuple[int | None, int | None]:
