@@ -1,6 +1,6 @@
 # Startup Pulse — Job Market Intelligence Platform
 
-An automated data pipeline that scrapes software engineering job postings from YC, Greenhouse, Ashby, and Hacker News, extracts trending skills using NLP, and visualizes market signals through an interactive dashboard.
+An automated data pipeline that scrapes software engineering job postings from YC, Greenhouse, Ashby, Lever, and Hacker News, extracts trending skills using NLP, and visualizes market signals through an interactive dashboard.
 
 Built with GitHub Actions, Google BigQuery, and Streamlit. Also supports local development with Apache Airflow and Docker Compose.
 
@@ -12,7 +12,7 @@ Below are some snapshots of the pipeline and analytics dashboard in action.
 
 ## Pipeline Orchestration
 
-The ETL pipeline runs daily via **GitHub Actions** (cloud) or **Apache Airflow** (local development), scraping all 4 job sources and loading results into BigQuery.
+The ETL pipeline runs daily via **GitHub Actions** (cloud) or **Apache Airflow** (local development), scraping all 5 job sources and loading results into BigQuery.
 
 | Airflow DAG View | Task Execution Dashboard |
 |----------|-------------------------|
@@ -79,7 +79,7 @@ Job Board Scrapers
 |    EXTRACT       | --> |    TRANSFORM      | --> |      LOAD       |
 | Scrape YC,       |     | Clean text (NLTK) |     | Deduplicate     |
 | Greenhouse,      |     | Extract skills    |     | Validate        |
-| Ashby, HN        |     |   (TF-IDF +       |     | Append to       |
+| Ashby, Lever, HN |     |   (TF-IDF +       |     | Append to       |
 | in parallel      |     |    taxonomy)       |     |   BigQuery      |
 |                  |     | Market metrics    |     |                 |
 +------------------+     +-------------------+     +-----------------+
@@ -111,9 +111,10 @@ All sources are filtered to **software engineering roles only** using regex-base
 | [Work at a Startup](https://www.workatastartup.com/jobs) (YC) | Playwright (JS-rendered) | ~55 software roles from 2 engineering categories, YC batch, description |
 | [Greenhouse](https://www.greenhouse.io/) (22 companies) | Public JSON API | ~2,300 software roles from Stripe, Airbnb, Figma, Databricks, etc. |
 | [Ashby](https://www.ashbyhq.com/) (18 companies) | Public Posting API | ~800 software roles from OpenAI, Notion, Cursor, Linear, Ramp, etc. |
+| [Lever](https://www.lever.co/) (11 companies) | Public Postings API | ~750 software roles from Spotify, Palantir, Plaid, Zoox, Mistral, etc. |
 | [HN "Who is Hiring?"](https://news.ycombinator.com/) | HN Firebase API | Monthly thread, 400+ postings per thread |
 
-The pipeline scrapes all four sources daily, yielding ~3,500 unique software job postings per run after deduplication.
+The pipeline scrapes all five sources daily, yielding ~4,200 unique software job postings per run after deduplication.
 
 ## Tech Stack
 
@@ -123,26 +124,28 @@ The pipeline scrapes all four sources daily, yielding ~3,500 unique software job
 | Orchestration (Local) | Apache Airflow 2.11.0 | Local development DAG with task UI |
 | Data Warehouse | Google BigQuery | Store and query structured data |
 | Visualization | Streamlit (Community Cloud) | Interactive analytics dashboard |
-| Scraping | Playwright + Greenhouse/Ashby APIs | Headless browser for JS pages, REST APIs for Greenhouse and Ashby |
+| Scraping | Playwright + Greenhouse/Ashby/Lever APIs | Headless browser for JS pages, REST APIs for Greenhouse, Ashby, and Lever |
 | NLP | NLTK + scikit-learn TF-IDF | Text cleaning and skill extraction |
 | Infrastructure (Local) | Docker Compose + PostgreSQL 15 | Local container orchestration |
 
 ## ETL Pipeline
 
-The pipeline runs daily at 08:00 UTC via GitHub Actions (or locally via Airflow) and executes 8 tasks:
+The pipeline runs daily at 08:00 UTC via GitHub Actions (or locally via Airflow) and executes 9 tasks:
 
 ```
 scrape_yc ----------\
-scrape_greenhouse ---+--> clean_and_normalize --+--> extract_skills ---+--> load_to_bigquery
-scrape_ashby -------/                           +--> aggregate_metrics-+
-scrape_hn ---------/
+scrape_greenhouse ---\
+scrape_ashby ---------+--> clean_and_normalize --+--> extract_skills ---+--> load_to_bigquery
+scrape_lever --------/                           +--> aggregate_metrics-+
+scrape_hn ----------/
 ```
 
 ### Extract
-- Four scrapers run in parallel — one per source
+- Five scrapers run in parallel — one per source
 - YC uses Playwright (headless Chromium) across 2 software engineering categories
 - Greenhouse uses the free, unauthenticated Job Board API across 22 company boards
 - Ashby uses the free, unauthenticated Posting API across 18 company boards
+- Lever uses the free, unauthenticated Postings API across 11 company boards
 - HN uses the Firebase API (no browser needed)
 - Non-software roles are filtered out using regex-based title/department matching
 - Each scraper normalizes data into a shared schema before writing to disk
@@ -207,6 +210,7 @@ startup-pulse/
 │   │   ├── yc_scraper.py          # YC Work at a Startup scraper (Playwright)
 │   │   ├── greenhouse_scraper.py  # Greenhouse Job Board API scraper (REST)
 │   │   ├── ashby_scraper.py       # Ashby Posting API scraper (REST)
+│   │   ├── lever_scraper.py       # Lever Postings API scraper (REST)
 │   │   └── hn_scraper.py          # HN Who is Hiring? scraper (API)
 │   ├── transform/
 │   │   ├── text_cleaner.py        # NLTK text preprocessing pipeline
@@ -234,6 +238,7 @@ startup-pulse/
 │   ├── test_yc_scraper.py
 │   ├── test_greenhouse_scraper.py
 │   ├── test_ashby_scraper.py
+│   ├── test_lever_scraper.py
 │   ├── test_text_cleaner.py
 │   ├── test_skill_extractor.py
 │   └── test_metrics_aggregator.py
@@ -289,6 +294,7 @@ All pipeline settings are centralized in `src/utils/config.py`:
 YC_JOBS_BASE_URL = "https://www.workatastartup.com/jobs/l"
 GREENHOUSE_API_BASE = "https://boards-api.greenhouse.io/v1/boards"
 ASHBY_API_BASE = "https://api.ashbyhq.com/posting-api/job-board"
+LEVER_API_BASE = "https://api.lever.co/v0/postings"
 HN_API_BASE = "https://hacker-news.firebaseio.com/v0"
 
 # 22 company boards scraped via Greenhouse public API
@@ -296,6 +302,9 @@ GREENHOUSE_BOARD_TOKENS = ["stripe", "airbnb", "figma", "databricks", ...]
 
 # 18 company boards scraped via Ashby public API
 ASHBY_BOARD_TOKENS = ["openai", "notion", "cursor", "linear", "ramp", ...]
+
+# 11 company boards scraped via Lever public API
+LEVER_BOARD_TOKENS = ["spotify", "palantir", "plaid", "zoox", "mistral", ...]
 
 # Software role filter — only engineering/CS roles are kept
 def is_software_role(title, department=""):
