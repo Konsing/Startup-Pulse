@@ -52,3 +52,30 @@ class TestYCScraper:
 
     def test_fetch_salary_from_page_empty_url(self):
         assert YCScraper._fetch_salary_from_page(None, "") == ""
+
+    def test_map_salary_populates_lookup(self):
+        lookup = {}
+        YCScraper._map_salary(
+            {"salary_min": 150000, "salary_max": 200000, "url": "/jobs/123"},
+            lookup,
+        )
+        assert lookup["/jobs/123"] == "$150000 - $200000"
+        assert lookup["https://www.workatastartup.com/jobs/123"] == "$150000 - $200000"
+
+    def test_map_salary_skips_when_no_salary(self):
+        lookup = {}
+        YCScraper._map_salary({"url": "/jobs/123"}, lookup)
+        assert len(lookup) == 0
+
+    def test_collect_salary_from_company_hit(self):
+        lookup = {}
+        hit = {
+            "name": "Acme Corp",
+            "jobs": [
+                {"salary_min": 120000, "salary_max": 180000, "url": "/jobs/1"},
+                {"url": "/jobs/2"},  # no salary
+            ],
+        }
+        YCScraper._collect_salary_from_hit(hit, lookup)
+        assert lookup["/jobs/1"] == "$120000 - $180000"
+        assert "/jobs/2" not in lookup

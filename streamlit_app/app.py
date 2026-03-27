@@ -354,24 +354,6 @@ elif page == "Market Metrics":
             fig_salary_bar.update_layout(**CHART_THEME)
             st.plotly_chart(fig_salary_bar, use_container_width=True)
 
-    # Salary distribution box plot from per-job data (when available)
-    if not jobs_df.empty:
-        salary_jobs = jobs_df.dropna(subset=["salary_min", "salary_max"])
-        if not salary_jobs.empty:
-            salary_jobs = salary_jobs.copy()
-            salary_jobs["avg_salary"] = (salary_jobs["salary_min"] + salary_jobs["salary_max"]) / 2
-
-            fig_salary = px.box(
-                salary_jobs,
-                x="source",
-                y="avg_salary",
-                color="source",
-                title="Salary Distribution by Source",
-                labels={"avg_salary": "Average Salary ($)"},
-            )
-            fig_salary.update_layout(**CHART_THEME)
-            st.plotly_chart(fig_salary, use_container_width=True)
-
     # Company stage breakdown
     if not jobs_df.empty and "company_stage" in jobs_df.columns:
         stage_data = jobs_df.dropna(subset=["company_stage"])

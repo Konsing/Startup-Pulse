@@ -30,6 +30,9 @@ class YCScraper:
     def scrape(self, output_dir: str) -> dict:
         """Launch a headless browser, visit each role category page, and save.
 
+        Intercepts Algolia API responses during page loads to capture salary
+        data without navigating to individual job pages.
+
         Returns:
             Metadata dict with ``total_jobs``.
         """
@@ -37,10 +40,33 @@ class YCScraper:
 
         seen_urls: set[str] = set()
         raw_jobs: list[dict] = []
+        _salary_lookup: dict[str, str] = {}
+
+        def _on_response(response):
+            """Capture salary data from Algolia API responses during page loads."""
+            try:
+                if "algolia" not in response.url.lower():
+                    return
+                if response.status != 200:
+                    return
+                body = response.json()
+                for result in body.get("results", [body]):
+                    index_name = result.get("index", "")
+                    hits = result.get("hits", [])
+                    if hits:
+                        logger.debug(
+                            "Algolia index=%s hits=%d keys=%s",
+                            index_name, len(hits), list(hits[0].keys())[:10],
+                        )
+                    for hit in hits:
+                        self._collect_salary_from_hit(hit, _salary_lookup)
+            except Exception:
+                pass
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
+            page.on("response", _on_response)
             page.set_default_timeout(SCRAPE_TIMEOUT_MS)
 
             for slug in YC_CATEGORY_SLUGS:
@@ -57,16 +83,24 @@ class YCScraper:
                 logger.info("YC scrape [%s]: %d jobs (%d new)", slug, len(cards), len(new_cards))
                 time.sleep(SCRAPE_DELAY_SECONDS)
 
-            # Fetch salary from individual job pages while browser is still open
-            logger.info("Fetching salary data from %d job pages...", len(raw_jobs))
-            for raw in raw_jobs:
-                url = raw.get("url", "")
-                if url and not url.startswith("http"):
-                    url = f"https://www.workatastartup.com{url}"
-                raw["salary"] = self._fetch_salary_from_page(page, url)
-                time.sleep(0.3)
-
             browser.close()
+
+        # Enrich jobs with salary from intercepted Algolia responses
+        logger.info("Algolia salary lookup: %d entries captured", len(_salary_lookup))
+        enriched = 0
+        for raw in raw_jobs:
+            if raw.get("salary"):
+                continue
+            job_url = raw.get("url", "")
+            salary = _salary_lookup.get(job_url)
+            if not salary and not job_url.startswith("http"):
+                salary = _salary_lookup.get(
+                    f"https://www.workatastartup.com{job_url}"
+                )
+            if salary:
+                raw["salary"] = salary
+                enriched += 1
+        logger.info("Enriched %d/%d jobs with salary from Algolia", enriched, len(raw_jobs))
 
         jobs = [self._normalize(raw) for raw in raw_jobs]
 
@@ -120,7 +154,8 @@ class YCScraper:
 
                     const description = card ? card.innerText.trim() : '';
 
-                    return {title, url, company, spans, description};
+                    const salarySpan = spans.find(s => /[$][0-9,]+/.test(s)) || '';
+                    return {title, url, company, spans, description, salary: salarySpan};
                 }""")
 
                 if not info.get("title") or not info.get("company"):
@@ -138,7 +173,7 @@ class YCScraper:
                     "title": info["title"],
                     "company": company,
                     "location": location,
-                    "salary": "",
+                    "salary": info.get("salary", ""),
                     "description": info.get("description", ""),
                     "url": info.get("url", ""),
                     "batch": batch,
@@ -148,6 +183,30 @@ class YCScraper:
                 continue
 
         return cards
+
+    @staticmethod
+    def _collect_salary_from_hit(hit: dict, lookup: dict) -> None:
+        """Extract salary from an Algolia hit and populate the lookup dict."""
+        # Company index: jobs nested under company
+        for job in hit.get("jobs", []):
+            YCScraper._map_salary(job, lookup)
+        # Direct job hit
+        YCScraper._map_salary(hit, lookup)
+
+    @staticmethod
+    def _map_salary(obj: dict, lookup: dict) -> None:
+        """Map a single job object's salary to its URL in the lookup."""
+        sal_min = obj.get("salary_min") or obj.get("salaryMin")
+        if not sal_min:
+            return
+        sal_max = obj.get("salary_max") or obj.get("salaryMax") or sal_min
+        url = obj.get("url", "") or obj.get("jobUrl", "")
+        if not url:
+            return
+        salary_str = f"${sal_min} - ${sal_max}"
+        lookup[url] = salary_str
+        if url.startswith("/"):
+            lookup[f"https://www.workatastartup.com{url}"] = salary_str
 
     def _normalize(self, raw: dict) -> dict:
         """Normalize a raw scraped job into the shared schema."""
