@@ -87,6 +87,15 @@ CHART_THEME = dict(
 DATASET = get_dataset()
 
 
+def _fmt_salary(df, cols=("avg_salary", "median_salary")):
+    """Round salary columns to 2 decimals and fill NaN with 'N/A'."""
+    df = df.copy()
+    for col in cols:
+        if col in df.columns:
+            df[col] = df[col].round(2).fillna("N/A")
+    return df
+
+
 # ── Data loaders (cached) ─────────────────────────────────────────────
 
 
@@ -214,14 +223,14 @@ if page == "Overview":
             top_skills = skills_df.nlargest(15, "frequency")[
                 ["skill", "category", "frequency", "avg_salary"]
             ]
-            st.dataframe(top_skills, use_container_width=True, hide_index=True)
+            st.dataframe(_fmt_salary(top_skills), use_container_width=True, hide_index=True)
         else:
             st.info("No skill data yet.")
 
     with right:
         st.subheader("Sources Overview")
         st.dataframe(
-            source_stats[["source", "total_jobs", "avg_salary", "remote_pct"]],
+            _fmt_salary(source_stats[["source", "total_jobs", "avg_salary", "remote_pct"]]),
             use_container_width=True,
             hide_index=True,
         )
@@ -290,7 +299,7 @@ elif page == "Skill Trends":
 
     # Detailed table
     st.subheader("Skill Details")
-    st.dataframe(filtered, use_container_width=True, hide_index=True)
+    st.dataframe(_fmt_salary(filtered), use_container_width=True, hide_index=True)
 
 # ── Market Metrics page ──────────────────────────────────────────────
 
@@ -341,8 +350,10 @@ elif page == "Market Metrics":
     # Salary by source from market_metrics (always fresh)
     if not metrics_df.empty:
         latest_metrics = metrics_df.sort_values("collected_at").groupby("source").last().reset_index()
-        salary_metrics = latest_metrics.dropna(subset=["avg_salary"])
+        salary_metrics = latest_metrics.dropna(subset=["avg_salary"]).copy()
         if not salary_metrics.empty:
+            salary_metrics["avg_salary"] = salary_metrics["avg_salary"].round(2)
+            salary_metrics["median_salary"] = salary_metrics["median_salary"].round(2)
             fig_salary_bar = px.bar(
                 salary_metrics,
                 x="source",
@@ -379,7 +390,7 @@ elif page == "Market Metrics":
             on="source",
             how="left",
         )
-        st.dataframe(display_metrics, use_container_width=True, hide_index=True)
+        st.dataframe(_fmt_salary(display_metrics), use_container_width=True, hide_index=True)
     else:
         st.dataframe(source_stats, use_container_width=True, hide_index=True)
 
