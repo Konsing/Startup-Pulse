@@ -51,4 +51,4 @@ class TestYCScraper:
         assert YCScraper._parse_salary("$150K - $200K") == (150000, 200000)
 
     def test_fetch_salary_from_page_empty_url(self):
-        assert YCScraper._fetch_salary_from_page("") == ""
+        assert YCScraper._fetch_salary_from_page(None, "") == ""

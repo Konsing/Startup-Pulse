@@ -14,8 +14,6 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-import requests
-
 from src.utils.config import (
     YC_JOBS_BASE_URL,
     YC_CATEGORY_SLUGS,
@@ -59,15 +57,16 @@ class YCScraper:
                 logger.info("YC scrape [%s]: %d jobs (%d new)", slug, len(cards), len(new_cards))
                 time.sleep(SCRAPE_DELAY_SECONDS)
 
-            browser.close()
+            # Fetch salary from individual job pages while browser is still open
+            logger.info("Fetching salary data from %d job pages...", len(raw_jobs))
+            for raw in raw_jobs:
+                url = raw.get("url", "")
+                if url and not url.startswith("http"):
+                    url = f"https://www.workatastartup.com{url}"
+                raw["salary"] = self._fetch_salary_from_page(page, url)
+                time.sleep(0.3)
 
-        # Fetch salary from individual job pages (JSON-LD)
-        for raw in raw_jobs:
-            url = raw.get("url", "")
-            if url and not url.startswith("http"):
-                url = f"https://www.workatastartup.com{url}"
-            raw["salary"] = self._fetch_salary_from_page(url)
-            time.sleep(0.3)
+            browser.close()
 
         jobs = [self._normalize(raw) for raw in raw_jobs]
 
@@ -180,17 +179,17 @@ class YCScraper:
         }
 
     @staticmethod
-    def _fetch_salary_from_page(url: str) -> str:
-        """Fetch salary range from a YC job page's JSON-LD structured data."""
+    def _fetch_salary_from_page(page, url: str) -> str:
+        """Navigate to a job page with Playwright and extract salary from JSON-LD."""
         if not url:
             return ""
         try:
-            resp = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
-            resp.raise_for_status()
-            # Extract minValue/maxValue from JSON-LD
+            page.goto(url, wait_until="domcontentloaded")
+            html = page.content()
+            # Extract minValue/maxValue from JSON-LD structured data
             match = re.search(
                 r'"minValue"\s*:\s*(\d+).*?"maxValue"\s*:\s*(\d+)',
-                resp.text,
+                html,
                 re.DOTALL,
             )
             if match:
