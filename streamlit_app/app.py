@@ -267,7 +267,7 @@ elif page == "Skill Trends":
     if selected_cat != "All":
         filtered = filtered[filtered["category"] == selected_cat]
 
-    top_n = st.slider("Number of skills to show", 10, 50, 20)
+    top_n = st.slider("Number of skills to show", 10, len(filtered), min(20, len(filtered)))
     chart_data = filtered.nlargest(top_n, "frequency")
 
     fig = px.bar(
