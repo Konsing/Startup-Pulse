@@ -7,6 +7,7 @@ YC_JOBS_BASE_URL = "https://www.workatastartup.com/jobs/l"
 HN_API_BASE = "https://hacker-news.firebaseio.com/v0"
 GREENHOUSE_API_BASE = "https://boards-api.greenhouse.io/v1/boards"
 ASHBY_API_BASE = "https://api.ashbyhq.com/posting-api/job-board"
+LEVER_API_BASE = "https://api.lever.co/v0/postings"
 
 # -- YC role categories (software/engineering only) --------------------------
 YC_CATEGORY_SLUGS = [
@@ -63,6 +64,22 @@ ASHBY_BOARD_TOKENS = [
     "runway",
     "supabase",
     "vanta",
+]
+
+# -- Lever board tokens ------------------------------------------------------
+# API: GET {LEVER_API_BASE}/{token}?mode=json
+LEVER_BOARD_TOKENS = [
+    "aledade",
+    "immuta",
+    "mistral",
+    "outreach",
+    "palantir",
+    "plaid",
+    "prismic",
+    "spotify",
+    "toptal",
+    "whoop",
+    "zoox",
 ]
 
 # -- Software role filter ----------------------------------------------------

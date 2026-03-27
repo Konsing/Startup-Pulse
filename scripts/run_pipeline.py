@@ -30,12 +30,14 @@ def run_scrapers(execution_date: str) -> None:
     from src.extract.greenhouse_scraper import GreenhouseScraper
     from src.extract.ashby_scraper import AshbyScraper
     from src.extract.hn_scraper import HNScraper
+    from src.extract.lever_scraper import LeverScraper
 
     scrapers = [
         ("yc", YCScraper()),
         ("greenhouse", GreenhouseScraper()),
         ("ashby", AshbyScraper()),
         ("hn", HNScraper()),
+        ("lever", LeverScraper()),
     ]
 
     for name, scraper in scrapers:
@@ -52,7 +54,7 @@ def run_clean(execution_date: str) -> None:
     from src.transform.text_cleaner import TextCleaner
 
     all_jobs = []
-    for source in ("yc", "greenhouse", "ashby", "hn"):
+    for source in ("yc", "greenhouse", "ashby", "hn", "lever"):
         path = f"{DATA_DIR}/raw/{source}/{execution_date}/jobs.json"
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as fh:

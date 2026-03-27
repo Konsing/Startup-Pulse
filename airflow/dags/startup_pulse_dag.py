@@ -57,6 +57,16 @@ def scrape_hn(**context):
     return result
 
 
+def scrape_lever(**context):
+    """Scrape Lever job boards."""
+    from src.extract.lever_scraper import LeverScraper
+    execution_date = context["ds"]
+    output_dir = f"/opt/airflow/data/raw/lever/{execution_date}"
+    result = LeverScraper().scrape(output_dir)
+    context["ti"].xcom_push(key="lever_metadata", value=result)
+    return result
+
+
 def clean_and_normalize(**context):
     """Merge all scraped jobs and clean text fields."""
     import json
@@ -67,7 +77,7 @@ def clean_and_normalize(**context):
     execution_date = context["ds"]
     all_jobs = []
 
-    for source in ("yc", "greenhouse", "ashby", "hn"):
+    for source in ("yc", "greenhouse", "ashby", "hn", "lever"):
         path = f"/opt/airflow/data/raw/{source}/{execution_date}/jobs.json"
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as fh:
@@ -163,6 +173,7 @@ with DAG(
     scrape_greenhouse_task = PythonOperator(task_id="scrape_greenhouse", python_callable=scrape_greenhouse)
     scrape_ashby_task = PythonOperator(task_id="scrape_ashby", python_callable=scrape_ashby)
     scrape_hn_task = PythonOperator(task_id="scrape_hn", python_callable=scrape_hn)
+    scrape_lever_task = PythonOperator(task_id="scrape_lever", python_callable=scrape_lever)
 
     clean_task = PythonOperator(task_id="clean_and_normalize", python_callable=clean_and_normalize)
 
@@ -172,6 +183,6 @@ with DAG(
     load_task = PythonOperator(task_id="load_to_bigquery", python_callable=load_to_bigquery)
 
     # 4 scrapers in parallel -> clean -> [skills, metrics] in parallel -> load
-    [scrape_yc_task, scrape_greenhouse_task, scrape_ashby_task, scrape_hn_task] >> clean_task
+    [scrape_yc_task, scrape_greenhouse_task, scrape_ashby_task, scrape_hn_task, scrape_lever_task] >> clean_task
     clean_task >> [skills_task, metrics_task]
     [skills_task, metrics_task] >> load_task
